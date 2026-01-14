@@ -2,7 +2,13 @@
 
 # Guncelium: The Earth-Based Digital Root System
 
-**Project Manifest, Comparative Analysis, and Grant Strategy** **Version:** 1.0 (Alpha Stage) **Lead Developer:** [bmatusiak](https://github.com/bmatusiak) bmatusiak **Status:** Private Alpha / Substrate Development
+**Project Manifest, Comparative Analysis, and Grant Strategy** 
+
+**Version:** 1.0 (Alpha Stage) 
+
+**Lead Developer:** [bmatusiak](https://github.com/bmatusiak) bmatusiak 
+
+**Status:** Private Alpha / Substrate Development
 
 
 ## I. The Vision: From Vapor to Earth
