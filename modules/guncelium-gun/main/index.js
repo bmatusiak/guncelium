@@ -404,4 +404,6 @@ function registerIpcHandlersOrThrow({ ipcMain, electronApp }) {
 
 module.exports = {
     registerIpcHandlersOrThrow,
+    createGunMainControllerOrThrow,
+    createGunTcpMeshControllerOrThrow,
 };
