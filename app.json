@@ -2,6 +2,10 @@
   "expo": {
     "name": "guncelium",
     "slug": "guncelium",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "scheme": "guncelium",
+    "android": {
+      "package": "us.bmatusiak.guncelium"
+    }
   }
 }
