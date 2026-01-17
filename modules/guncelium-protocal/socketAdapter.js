@@ -457,8 +457,10 @@ function createSocketAdapterOrThrow(lib, cfg) {
         requireFunction(server.listen, 'server.listen');
 
         server.listen({ host: h, port: p }, () => {
+            const a = (server && typeof server.address === 'function') ? server.address() : null;
+            const boundPort = (a && typeof a === 'object' && a.port) ? a.port : p;
             // eslint-disable-next-line no-console
-            console.log(`[Socket] Server listening on ${h}:${p}`);
+            console.log(`[Socket] Server listening on ${h}:${boundPort}`);
         });
         return server;
     }

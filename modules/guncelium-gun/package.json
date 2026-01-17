@@ -8,6 +8,9 @@
   "main": "index.js",
   "dependencies": {
     "gun": "github:amark/gun",
+    "gun-rebuild": "github:bmatusiak/gun-rebuild",
+    "gun-rebuild-sea": "github:bmatusiak/gun-rebuild-sea",
+    "gun-unbuild": "github:bmatusiak/gun-unbuild",
     "guncelium-protocal": "file:../guncelium-protocal"
   },
   "scripts": {

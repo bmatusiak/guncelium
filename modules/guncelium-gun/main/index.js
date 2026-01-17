@@ -12,6 +12,11 @@ function requireObject(value, name) {
     if (!value || typeof value !== 'object') throw new Error(`${name} must be an object`);
 }
 
+function requireObjectLike(value, name) {
+    const t = typeof value;
+    if (!value || (t !== 'object' && t !== 'function')) throw new Error(`${name} must be an object or function`);
+}
+
 function requireFunction(value, name) {
     if (typeof value !== 'function') throw new Error(`${name} must be a function`);
 }
@@ -200,8 +205,27 @@ function crashAsyncOrThrow(e) {
     throw err;
 }
 
+async function waitForServerListeningOrThrow(server) {
+    requireObject(server, 'server');
+    if (typeof server.once !== 'function') throw new Error('server.once must be a function');
+    if (typeof server.listening === 'boolean' && server.listening) return;
+
+    await new Promise((resolve, reject) => {
+        const onError = (err) => {
+            server.removeListener('listening', onListening);
+            reject(err);
+        };
+        const onListening = () => {
+            server.removeListener('error', onError);
+            resolve();
+        };
+        server.once('error', onError);
+        server.once('listening', onListening);
+    });
+}
+
 function requireGunMeshOrThrow(gun) {
-    requireObject(gun, 'gun');
+    requireObjectLike(gun, 'gun');
     const opt = gun._ && gun._.opt;
     if (!opt || typeof opt !== 'object') throw new Error('gun opt missing');
     const mesh = opt.mesh;
@@ -213,7 +237,7 @@ function requireGunMeshOrThrow(gun) {
 }
 
 function attachWireToPeerOrThrow(mesh, peer, wire) {
-    requireObject(mesh, 'mesh');
+    requireFunction(mesh, 'mesh');
     requireObject(peer, 'peer');
     requireObject(wire, 'wire');
 
@@ -234,7 +258,7 @@ function attachWireToPeerOrThrow(mesh, peer, wire) {
 }
 
 function installMeshWireOrThrow(mesh, socket) {
-    requireObject(mesh, 'mesh');
+    requireFunction(mesh, 'mesh');
     requireObject(socket, 'socket');
     if (typeof socket.connect !== 'function') throw new Error('socket.connect must be a function');
 
@@ -258,7 +282,9 @@ function createGunTcpMeshControllerOrThrow({ electronApp }) {
     requireObject(electronApp, 'electronApp');
 
     // eslint-disable-next-line global-require
-    const Gun = require('gun');
+    const Gun = require('gun/gun');
+    // eslint-disable-next-line global-require
+    require('gun/lib/wire');
     // eslint-disable-next-line global-require
     require('gun/sea');
 
@@ -278,7 +304,8 @@ function createGunTcpMeshControllerOrThrow({ electronApp }) {
         const peers = normalizePeerTargetsOrThrow(o.peers);
 
         const gun = Gun({ file: storeDir, peers: [] });
-        if (!gun || typeof gun !== 'function') throw new Error('gun initialization failed');
+        if (!gun) throw new Error('gun initialization failed');
+        if (typeof gun.get !== 'function') throw new Error('gun initialization failed (missing get)');
 
         state.gun = gun;
         state.storeDir = storeDir;
@@ -290,6 +317,8 @@ function createGunTcpMeshControllerOrThrow({ electronApp }) {
             const peer = { id: null, url: randomIdOrThrow('tcp-in'), wire: null };
             attachWireToPeerOrThrow(mesh, peer, wire);
         }, host);
+
+        await waitForServerListeningOrThrow(server);
 
         const addr = server.address && server.address();
         if (!addr || typeof addr !== 'object' || !addr.port) throw new Error('gun tcp server missing bound port');
