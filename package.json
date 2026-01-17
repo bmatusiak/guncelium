@@ -1,7 +1,7 @@
 {
   "name": "guncelium",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "src/index.js",
   "description": "guncelium-app",
   "author": "bmatusiak",
   "scripts": {
@@ -12,9 +12,12 @@
     "electron": "expo-electron start"
   },
   "dependencies": {
+    "@bmatusiak/rectify": "github:bmatusiak/rectify",
     "expo": "~54.0.31",
     "expo-electron": "github:bmatusiak/expo-electron",
     "expo-status-bar": "~3.0.9",
+    "guncelium-gun": "file:modules/guncelium-gun",
+    "guncelium-tor": "file:modules/guncelium-tor",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
