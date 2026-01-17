@@ -1,0 +1,28 @@
+{
+  "name": "guncelium",
+  "version": "1.0.0",
+  "main": "index.js",
+  "description": "guncelium-app",
+  "author": "bmatusiak",
+  "scripts": {
+    "start": "expo start --dev-client",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "electron": "expo-electron start"
+  },
+  "dependencies": {
+    "expo": "~54.0.31",
+    "expo-electron": "github:bmatusiak/expo-electron",
+    "expo-status-bar": "~3.0.9",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-web": "^0.21.0"
+  },
+  "private": true,
+  "devDependencies": {
+    "@types/react": "~19.1.10",
+    "electron": "39.2.7"
+  }
+}
