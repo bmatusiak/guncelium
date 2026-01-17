@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 
 import app from '../runtime/rectifyApp';
-import { GunPanel, TorPanel } from './panels';
+import { GunPanel, MonikerPanel, TorPanel } from './panels';
 
 function isElectronRenderer() {
   return (
@@ -52,6 +52,7 @@ export default function App() {
   }, []);
 
   const gun = services ? services.gun : null;
+  const moniker = services ? services.moniker : null;
   const tor = services ? services.tor : null;
 
   const envLabel = useMemo(() => {
@@ -76,6 +77,7 @@ export default function App() {
 
       <TorPanel tor={tor} gunTcpPort={gunTcpStatus && gunTcpStatus.running ? gunTcpStatus.port : null} />
       <GunPanel gun={gun} onStatus={setGunStatus} onTcpStatus={setGunTcpStatus} />
+      <MonikerPanel moniker={moniker} />
 
       <StatusBar style="auto" />
     </ScrollView>

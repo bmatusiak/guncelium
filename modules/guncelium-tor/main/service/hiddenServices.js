@@ -49,6 +49,13 @@ function createHiddenServices({ app, keys, localPort, virtualPort = 80, serviceN
         return { ok: false, error: 'localPort is required to configure HiddenServicePort' };
     }
 
+    if (!Array.isArray(keys)) {
+        return { ok: false, error: 'keys must be an array' };
+    }
+    if (keys.length < 1) {
+        return { ok: false, error: 'keys must contain at least one entry (use [{}] to let Tor generate keys)' };
+    }
+
     ensureDir(torDir);
     // Clear old hidden services to avoid stale/invalid configs breaking Tor startup.
     fs.rmSync(hsBaseDir, { recursive: true, force: true });
