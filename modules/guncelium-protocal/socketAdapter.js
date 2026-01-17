@@ -220,7 +220,10 @@ function createSocketAdapterOrThrow(lib, cfg) {
         function sendOrThrow(data) {
             if (readyState !== 1) throw new Error('socket is not open');
             const isBinary = data instanceof Uint8Array;
-            const payload = isBinary ? data : encoder.encode(JSON.stringify(data));
+            const isString = (typeof data === 'string');
+            const payload = isBinary
+                ? data
+                : (isString ? encoder.encode(data) : encoder.encode(JSON.stringify(data)));
             const type = isBinary ? TYPES.BINARY : TYPES.MESSAGE;
             const framed = encodeFrameOrThrow(payload, type);
             writeRawOrThrow(framed);
@@ -257,7 +260,11 @@ function createSocketAdapterOrThrow(lib, cfg) {
                     } catch (e) {
                         throw new Error('invalid JSON payload');
                     }
-                    if (api.onmessage) api.onmessage({ data: obj });
+                    if (api.onmessage) {
+                        // Gun's mesh batches messages as JSON arrays in a single string like: "[ {...},{...} ]".
+                        // If we emit it as an actual Array, mesh.hear() will not treat it as a batch.
+                        api.onmessage({ data: Array.isArray(obj) ? text : obj });
+                    }
                 } else {
                     throw new Error(`unknown frame type ${type}`);
                 }

@@ -24,7 +24,8 @@ function writeHiddenServiceKeysExpanded(hsDir, expandedSecret64) {
 function buildTorrc({ dataDir, enableControlPort, hsEntries }) {
     void enableControlPort;
     const lines = [
-        'SocksPort 0',
+        'SocksPort 9050',
+        'SocksListenAddress 127.0.0.1',
         // ControlPort is configured via CLI args so we can pick a free port on restart.
         'ControlPort 0',
         'RunAsDaemon 0',

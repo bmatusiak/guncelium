@@ -30,7 +30,7 @@ function normalizeInfo(info) {
     };
 }
 
-export default function TorPanel({ tor, gunPort }) {
+export default function TorPanel({ tor, gunTcpPort }) {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
     const [info, setInfo] = useState(null);
@@ -194,18 +194,18 @@ export default function TorPanel({ tor, gunPort }) {
         }
     }, [canUse.ok, canUse.reason, tor]);
 
-    const restartWithGunHiddenService = useCallback(async () => {
+    const restartWithGunTcpHiddenService = useCallback(async () => {
         setBusy(true);
         setError(null);
         setLastResult(null);
         try {
             if (!canUse.ok) throw new Error(canUse.reason || 'tor unavailable');
-            if (!gunPort) throw new Error('gun must be running to attach a hidden service');
+            if (!gunTcpPort) throw new Error('gun tcp must be running to attach a hidden service');
             if (!tor.hiddenServices || typeof tor.hiddenServices !== 'object') throw new Error('tor.hiddenServices not available');
             if (typeof tor.hiddenServices.create !== 'function') throw new Error('tor.hiddenServices.create not available');
 
             // eslint-disable-next-line no-console
-            console.log(`[ui][tor] restart with gun hidden service ${jsonForLogOrThrow({ gunPort: Number(gunPort) })}`);
+            console.log(`[ui][tor] restart with gun tcp hidden service ${jsonForLogOrThrow({ gunTcpPort: Number(gunTcpPort) })}`);
 
             // Stop Tor if it is running; if it isn't, fail-fast behavior is handled by tor.stop.
             let infoR = (tor.info && typeof tor.info === 'function') ? await tor.info() : await tor.status();
@@ -214,9 +214,9 @@ export default function TorPanel({ tor, gunPort }) {
             }
 
             const created = await tor.hiddenServices.create({
-                port: Number(gunPort),
-                virtualPort: 80,
-                service: 'gun',
+                port: Number(gunTcpPort),
+                virtualPort: 8888,
+                service: 'gun-tcp',
                 controlPort: true,
                 keys: DEFAULT_GUN_KEYS,
             });
@@ -244,7 +244,7 @@ export default function TorPanel({ tor, gunPort }) {
         } finally {
             setBusy(false);
         }
-    }, [canUse.ok, canUse.reason, gunPort, tor]);
+    }, [canUse.ok, canUse.reason, gunTcpPort, tor]);
 
     return (
         <View style={{ padding: 12, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, marginBottom: 12 }}>
@@ -263,7 +263,7 @@ export default function TorPanel({ tor, gunPort }) {
 
             <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
                 <Button title="HS Status" onPress={refreshHiddenServices} disabled={!canUse.ok || busy} />
-                <Button title="Restart w/ Gun HS" onPress={restartWithGunHiddenService} disabled={!canUse.ok || busy || !gunPort} />
+                <Button title="Restart w/ Gun TCP HS" onPress={restartWithGunTcpHiddenService} disabled={!canUse.ok || busy || !gunTcpPort} />
             </View>
 
             {error ? <Text style={{ color: '#a00' }}>Error: {error}</Text> : null}

@@ -18,6 +18,7 @@ export default function App() {
   const [fatal, setFatal] = useState(null);
   const [services, setServices] = useState(() => (app && app.services ? app.services : {}));
   const [gunStatus, setGunStatus] = useState(null);
+  const [gunTcpStatus, setGunTcpStatus] = useState(null);
 
   useEffect(() => {
     let mounted = true;
@@ -73,8 +74,8 @@ export default function App() {
       <Text style={{ fontSize: 22, fontWeight: '700', marginBottom: 6 }}>guncelium</Text>
       <Text style={{ color: '#555', marginBottom: 12 }}>env: {envLabel}</Text>
 
-      <TorPanel tor={tor} gunPort={gunStatus && gunStatus.running ? gunStatus.port : null} />
-      <GunPanel gun={gun} onStatus={setGunStatus} />
+      <TorPanel tor={tor} gunTcpPort={gunTcpStatus && gunTcpStatus.running ? gunTcpStatus.port : null} />
+      <GunPanel gun={gun} onStatus={setGunStatus} onTcpStatus={setGunTcpStatus} />
 
       <StatusBar style="auto" />
     </ScrollView>

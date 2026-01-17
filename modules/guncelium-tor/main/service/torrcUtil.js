@@ -6,7 +6,8 @@ function ensureMinimalTorrc({ torrcPath, dataDir }) {
     if (fs.existsSync(torrcPath)) return;
     if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
     const lines = [
-        'SocksPort 0',
+        'SocksPort 9050',
+        'SocksListenAddress 127.0.0.1',
         'RunAsDaemon 0',
         `DataDirectory ${dataDir}`,
         'Log notice stdout',
@@ -19,7 +20,8 @@ function writeMinimalTorrc({ torrcPath, dataDir }) {
     if (!dataDir) throw new Error('dataDir is required');
     if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
     const lines = [
-        'SocksPort 0',
+        'SocksPort 9050',
+        'SocksListenAddress 127.0.0.1',
         'RunAsDaemon 0',
         `DataDirectory ${dataDir}`,
         'Log notice stdout',
