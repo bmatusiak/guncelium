@@ -6,6 +6,9 @@
   "author": "",
   "type": "commonjs",
   "main": "index.js",
+  "dependencies": {
+    "gun": "github:amark/gun"
+  },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   }

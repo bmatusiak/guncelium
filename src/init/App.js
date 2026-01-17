@@ -1,21 +1,82 @@
 import { StatusBar } from 'expo-status-bar';
-import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ScrollView, Text, View } from 'react-native';
 
-export default function App() {
+import app from '../runtime/rectifyApp';
+import { GunPanel, TorPanel } from './panels';
+
+function isElectronRenderer() {
   return (
-    <View style={styles.container}>
-      <Text>Open up App.js to start working on your app!</Text>
-      <StatusBar style="auto" />
-    </View>
+    typeof process === 'object' &&
+    !!(process.versions && process.versions.electron) &&
+    typeof window === 'object' &&
+    typeof window.document !== 'undefined'
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
+export default function App() {
+  const [fatal, setFatal] = useState(null);
+  const [services, setServices] = useState(() => (app && app.services ? app.services : {}));
+  const [gunStatus, setGunStatus] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const onError = (e) => {
+      if (!mounted) return;
+      setFatal(e && e.message ? e.message : String(e));
+    };
+    const onService = () => {
+      if (!mounted) return;
+      setServices(app.services || {});
+    };
+    const onReady = () => {
+      if (!mounted) return;
+      setServices(app.services || {});
+    };
+
+    app.on('error', onError);
+    app.on('service', onService);
+    app.on('ready', onReady);
+
+    // Initialize immediately in case services already exist.
+    setServices(app.services || {});
+
+    return () => {
+      mounted = false;
+      app.removeListener('error', onError);
+      app.removeListener('service', onService);
+      app.removeListener('ready', onReady);
+    };
+  }, []);
+
+  const gun = services ? services.gun : null;
+  const tor = services ? services.tor : null;
+
+  const envLabel = useMemo(() => {
+    if (isElectronRenderer()) return 'electron-renderer';
+    if (typeof navigator === 'object' && navigator && navigator.product === 'ReactNative') return 'react-native';
+    return 'web/unknown';
+  }, []);
+
+  if (fatal) {
+    return (
+      <View style={{ flex: 1, padding: 16 }}>
+        <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 8 }}>Fatal</Text>
+        <Text style={{ color: '#a00' }}>{fatal}</Text>
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView contentContainerStyle={{ padding: 16 }}>
+      <Text style={{ fontSize: 22, fontWeight: '700', marginBottom: 6 }}>guncelium</Text>
+      <Text style={{ color: '#555', marginBottom: 12 }}>env: {envLabel}</Text>
+
+      <TorPanel tor={tor} gunPort={gunStatus && gunStatus.running ? gunStatus.port : null} />
+      <GunPanel gun={gun} onStatus={setGunStatus} />
+
+      <StatusBar style="auto" />
+    </ScrollView>
+  );
+}

@@ -9,14 +9,115 @@ const { createDesktopBridge } = require('./desktop');
 let mainWindow;
 const DEV_URL = process.env.EXPO_WEB_URL || 'http://localhost:8081';
 const PROD_INDEX = path.join(__dirname, '..', 'app', 'index.html');
+const ENABLE_RENDERER_DIAGNOSTICS = (!app.isPackaged) && (process.env.NODE_ENV !== 'production');
 
 const deepLinks = createDeepLinkBridge({ app });
 const desktop = createDesktopBridge({ app, ipcMain, nativeTheme, clipboard, dialog, shell, powerMonitor });
 
 desktop.registerIpcHandlers();
 
+function requireString(value, name) {
+    if (typeof value !== 'string' || value.trim().length === 0) throw new Error(`${name} must be a non-empty string`);
+}
+
+function requireObject(value, name) {
+    if (!value || typeof value !== 'object') throw new Error(`${name} must be an object`);
+}
+
+function installRendererLogForwardingOrThrow() {
+    ipcMain.on('renderer:console', (event, payload) => {
+        void event;
+        requireObject(payload, 'payload');
+        requireString(payload.level, 'payload.level');
+        const ts = typeof payload.ts === 'number' ? payload.ts : Date.now();
+        const args = Array.isArray(payload.args) ? payload.args : [];
+        const line = `[renderer:${payload.level}] ${new Date(ts).toISOString()} ${args.join(' ')}`;
+        if (payload.level === 'error') console.error(line);
+        else if (payload.level === 'warn') console.warn(line);
+        else console.log(line);
+    });
+
+    ipcMain.on('renderer:uncaught', (event, payload) => {
+        void event;
+        requireObject(payload, 'payload');
+        requireString(payload.kind, 'payload.kind');
+        const ts = typeof payload.ts === 'number' ? payload.ts : Date.now();
+        const p = payload.payload && typeof payload.payload === 'object' ? payload.payload : {};
+        const msg = `[renderer:${payload.kind}] ${new Date(ts).toISOString()} ${p.message || ''}`;
+        console.error(msg);
+        if (p.stack) console.error(String(p.stack));
+        if (payload.kind === 'unhandledrejection' && p.reason) console.error(String(p.reason));
+    });
+}
+
+if (ENABLE_RENDERER_DIAGNOSTICS) {
+    installRendererLogForwardingOrThrow();
+}
+
+// Register IPC endpoints for app modules (fail-fast if missing).
+// These back the Electron preload bridge used by the renderer.
+const { registerIpcHandlersOrThrow: registerGunIpcHandlersOrThrow } = require('guncelium-gun/main');
+const { registerIpcHandlersOrThrow: registerTorIpcHandlersOrThrow } = require('guncelium-tor/main');
+
+registerGunIpcHandlersOrThrow({ ipcMain, electronApp: app });
+registerTorIpcHandlersOrThrow({ ipcMain, electronApp: app });
+
+function requireObject(value, name) {
+    if (!value || typeof value !== 'object') throw new Error(`${name} must be an object`);
+}
+
+function requireFunction(value, name) {
+    if (typeof value !== 'function') throw new Error(`${name} must be a function`);
+}
+
+function attachRendererDiagnosticsOrThrow(win) {
+    requireObject(win, 'win');
+    requireObject(win.webContents, 'win.webContents');
+    requireFunction(win.webContents.on, 'win.webContents.on');
+
+    const levelName = (lvl) => {
+        if (lvl === 0) return 'debug';
+        if (lvl === 1) return 'info';
+        if (lvl === 2) return 'warn';
+        if (lvl === 3) return 'error';
+        return 'log';
+    };
+
+    win.webContents.on('console-message', (event, level, message, line, sourceId) => {
+        void event;
+        const lvl = levelName(level);
+        const src = sourceId ? String(sourceId) : 'unknown';
+        const ln = Number.isFinite(Number(line)) ? Number(line) : 0;
+        // Print in a grep-friendly format.
+        // eslint-disable-next-line no-console
+        console[lvl](`[renderer:${lvl}] ${src}:${ln} ${String(message)}`);
+    });
+
+    win.webContents.on('render-process-gone', (event, details) => {
+        void event;
+        // eslint-disable-next-line no-console
+        console.error('[renderer:render-process-gone]', details);
+    });
+
+    win.webContents.on('preload-error', (event, preloadPath, error) => {
+        void event;
+        // eslint-disable-next-line no-console
+        console.error('[renderer:preload-error]', { preloadPath, error: error && error.message ? error.message : String(error) });
+    });
+
+    win.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+        void event;
+        // eslint-disable-next-line no-console
+        console.error('[renderer:did-fail-load]', { errorCode, errorDescription, validatedURL });
+    });
+}
+
 function createWindow() {
-    const preloadPath = process.env.EXPO_PRELOAD_PATH ? path.resolve(process.env.EXPO_PRELOAD_PATH) : path.join(__dirname, 'preload.js');
+    const preloadPath = process.env.EXPO_PRELOAD_PATH
+        ? path.resolve(process.env.EXPO_PRELOAD_PATH)
+        : (ENABLE_RENDERER_DIAGNOSTICS
+            ? path.join(__dirname, 'preload-logging.js')
+            : path.join(__dirname, 'preload.js'));
     mainWindow = new BrowserWindow({
         width: 480,
         height: 960,
@@ -28,6 +129,10 @@ function createWindow() {
             sandbox: false
         },
     });
+
+    if (ENABLE_RENDERER_DIAGNOSTICS) {
+        attachRendererDiagnosticsOrThrow(mainWindow);
+    }
     deepLinks.setMainWindow(mainWindow);
     desktop.setMainWindow(mainWindow);
 
