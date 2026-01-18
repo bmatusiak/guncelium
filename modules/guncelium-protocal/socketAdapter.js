@@ -419,7 +419,20 @@ function createSocketAdapterOrThrow(lib, cfg) {
     function connect(address, port) {
         requireString(address, 'address');
         const p = requirePort(port, 'port');
-        const isOnion = address.endsWith('.onion');
+
+        function normalizeOnionHostOrNull(value) {
+            const raw = String(value || '').trim().toLowerCase();
+            if (!raw) return null;
+            const base = raw.endsWith('.onion') ? raw.slice(0, -6) : raw;
+            // Tor v3 onion hostnames are 56 base32 chars (a-z2-7). v2 were 16.
+            const isV3 = /^[a-z2-7]{56}$/.test(base);
+            const isV2 = /^[a-z2-7]{16}$/.test(base);
+            if (!isV3 && !isV2) return null;
+            return `${base}.onion`;
+        }
+
+        const onionHost = normalizeOnionHostOrNull(address);
+        const isOnion = !!onionHost;
 
         const rawOptions = isOnion
             ? { host: config.socksHost, port: config.socksPort }
@@ -428,7 +441,7 @@ function createSocketAdapterOrThrow(lib, cfg) {
         return new Promise((resolve, reject) => {
             const raw = lib.createConnection(rawOptions, () => {
                 try {
-                    const wrapped = wrapRawSocketOrThrow(raw, isOnion ? { onion: address, port: p } : {});
+                    const wrapped = wrapRawSocketOrThrow(raw, isOnion ? { onion: onionHost, port: p } : {});
                     wrapped.onerror = (err) => reject(err);
                     wrapped.onopen = () => resolve(wrapped);
                 } catch (e) {
