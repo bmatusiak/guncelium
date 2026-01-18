@@ -65,6 +65,7 @@ function printHelp() {
         '  --gun-host HOST          Gun TCP listen host (default: 127.0.0.1)',
         '  --gun-port PORT          Gun TCP listen port (default: 0, random)',
         '  --tor                    Enable Tor + hidden service for Gun TCP',
+        '  --clean-slate            Reset Tor state/HS config before start (default: true; set --clean-slate=false to preserve)',
         '  --hs-key KEY             Hidden service key name (optional)',
         '  --virtual-port PORT      Onion virtual port (default: 8888)',
         '',

@@ -52,6 +52,45 @@ npm run electron
 npm start
 ```
 
+## Testing
+
+There isn’t a Jest-style test runner wired up yet. The primary verification path right now is an **in-app E2E harness** (Test Moniker) plus a **Node CLI smoke test**.
+
+### E2E (Electron UI / Test Moniker)
+
+This runs inside the Electron renderer and uses the real Tor + Gun services.
+
+- Start Electron: `npm run electron`
+- In the app UI, open the **Test Moniker** panel
+- Run: **“Tor: host Gun TCP as hidden service”**
+
+What it does (high level):
+
+- Starts Gun TCP on `127.0.0.1` with a random port
+- Ensures Tor is installed (installs if missing)
+- Creates a v3 hidden service mapping `virtualPort: 8888` → the Gun TCP port
+- Starts Tor (non-destructive: `cleanSlate: false`)
+- Waits (bounded) for an onion hostname and prints `<hostname>.onion`
+- Stops Tor and Gun at the end (or on failure)
+
+Test definition: [src/__e2e_tests__/torGunHosting.js](src/__e2e_tests__/torGunHosting.js)
+
+### CLI smoke test (Node)
+
+The repo ships a small CLI (useful for headless/manual testing):
+
+- Help: `npm run guncelium -- help`
+- Install Tor into the data dir: `npm run guncelium -- tor-install`
+- Show Tor info: `npm run guncelium -- tor-info`
+- Start Gun TCP (+ optional Tor HS) until Ctrl+C:
+	- Without Tor: `npm run guncelium -- service`
+	- With Tor HS: `npm run guncelium -- service --tor`
+
+Notes:
+
+- CLI output is JSON lines (easy to pipe/parse).
+- The CLI uses a per-user state directory by default (`$XDG_STATE_HOME/guncelium` or `~/.local/state/guncelium`). Override with `--data-dir PATH`.
+
 ## Current wiring
 
 In Electron:
