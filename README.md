@@ -83,6 +83,10 @@ The goal is to enable **3rd-party AI services** to operate on the network and ge
 - Preserves participant privacy (Tor).
 - Uses the shared Gun graph for coordination/state.
 
+This direction is also intended to support **in-person transactions** (local-first): two parties can coordinate and settle work/payment while colocated, then sync/broadcast later when wider connectivity is available.
+
+It can also be used for **recurring payments** (subscriptions/retainers): an escrow bot can coordinate periodic settlement under agreed rules, even if participants are intermittently offline.
+
 These are currently **proposal/draft docs** (not implemented yet), but they represent a major direction for the project:
 
 - Decentralized autonomous bot governance over Tor + Gun: [docs/white-paper-decentralized-bot.md](docs/white-paper-decentralized-bot.md)
