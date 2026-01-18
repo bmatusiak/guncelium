@@ -65,51 +65,195 @@ function loadRnTorOrThrow() {
     return RnTor;
 }
 
-async function start(opts) {
-    requireObject(opts, 'opts');
+function stripOnionSuffix(value) {
+    if (value === undefined || value === null) return null;
+    const s = String(value).trim();
+    if (!s) return null;
+    return s.replace(/\.onion$/i, '');
+}
 
-    // Mirror the old rn_tor_app shape, but fail-fast on missing fields.
-    requireString(opts.dataDir, 'opts.dataDir');
-    const socksPort = requirePort(opts.socksPort, 'opts.socksPort');
-    const targetPort = requirePort(opts.targetPort, 'opts.targetPort');
+function requirePositiveNumber(value, name) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) throw new Error(`${name} must be a positive number`);
+    return n;
+}
 
-    const timeoutMs = (opts.timeoutMs === undefined || opts.timeoutMs === null) ? 60000 : Number(opts.timeoutMs);
-    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('opts.timeoutMs must be a positive number');
+function requireBooleanOrDefault(value, name, defaultValue) {
+    if (value === undefined || value === null) return defaultValue;
+    if (typeof value !== 'boolean') throw new Error(`${name} must be boolean`);
+    return value;
+}
 
-    const keys = normalizeKeysOrThrow(opts.keys);
+function isRunningFromStatusCode(code) {
+    // Per react-native-nitro-tor README:
+    // 0: starting, 1: running, 2: stopped/error
+    const n = Number(code);
+    return n === 0 || n === 1;
+}
 
-    const RnTor = loadRnTorOrThrow();
-    const result = await RnTor.startTorIfNotRunning({
-        data_dir: opts.dataDir,
-        socks_port: socksPort,
-        target_port: targetPort,
-        timeout_ms: timeoutMs,
-        keys,
-    });
+function createTorReactNativeApiOrThrow() {
+    const state = {
+        dataDir: null,
+        socksPort: 8765,
+        timeoutMs: 60000,
+        pendingHs: null,
+        lastStart: null,
+    };
 
-    if (!result || typeof result !== 'object') throw new Error('RnTor.startTorIfNotRunning returned non-object');
-    if (result.is_success !== true) {
-        const msg = result.error_message ? String(result.error_message) : 'unknown tor start error';
-        throw new Error(`tor start failed: ${msg}`);
+    async function ensureDataDirOrThrow() {
+        if (state.dataDir) return state.dataDir;
+
+        // eslint-disable-next-line global-require
+        const FS = require('expo-file-system');
+        if (!FS || typeof FS !== 'object') throw new Error('expo-file-system did not export an object');
+        if (typeof FS.documentDirectory !== 'string' || FS.documentDirectory.trim().length === 0) throw new Error('expo-file-system.documentDirectory is required');
+        if (typeof FS.makeDirectoryAsync !== 'function') throw new Error('expo-file-system.makeDirectoryAsync is required');
+
+        const base = String(FS.documentDirectory);
+        const dir = base.endsWith('/') ? `${base}guncelium/tor` : `${base}/guncelium/tor`;
+        await FS.makeDirectoryAsync(dir, { intermediates: true });
+        state.dataDir = dir;
+        return dir;
     }
 
-    return result;
+    async function info() {
+        const RnTor = loadRnTorOrThrow();
+        if (typeof RnTor.getServiceStatus !== 'function') throw new Error('RnTor.getServiceStatus is required');
+        const code = await RnTor.getServiceStatus();
+        return {
+            ok: true,
+            installed: true,
+            running: isRunningFromStatusCode(code),
+            mode: 'react-native',
+            socksPort: state.socksPort,
+            dataDir: state.dataDir,
+            native: { serviceStatus: code },
+        };
+    }
+
+    async function status() {
+        return info();
+    }
+
+    async function start(opts) {
+        const o = (opts && typeof opts === 'object') ? opts : {};
+        const cleanSlate = requireBooleanOrDefault(o.cleanSlate, 'opts.cleanSlate', false);
+        void cleanSlate;
+
+        const dataDir = await ensureDataDirOrThrow();
+        const RnTor = loadRnTorOrThrow();
+
+        // Prefer pending hidden service configuration created via hiddenServices.create().
+        const pending = state.pendingHs;
+        const timeoutMs = state.timeoutMs;
+        requirePositiveNumber(timeoutMs, 'timeoutMs');
+
+        if (pending) {
+            requireObject(pending, 'pending hidden service');
+            const result = await RnTor.startTorIfNotRunning({
+                data_dir: dataDir,
+                socks_port: state.socksPort,
+                target_port: pending.localPort,
+                timeout_ms: timeoutMs,
+                keys: pending.keys,
+            });
+
+            if (!result || typeof result !== 'object') throw new Error('RnTor.startTorIfNotRunning returned non-object');
+            if (result.is_success !== true) {
+                const msg = result.error_message ? String(result.error_message) : 'unknown tor start error';
+                throw new Error(`tor start failed: ${msg}`);
+            }
+
+            state.lastStart = {
+                ts: Date.now(),
+                service: pending.service,
+                localPort: pending.localPort,
+                virtualPort: pending.virtualPort,
+                onion: stripOnionSuffix(result.onion_address || (Array.isArray(result.onion_addresses) ? result.onion_addresses[0] : null)),
+                raw: result,
+            };
+
+            return {
+                ok: true,
+                running: true,
+                installed: true,
+                mode: 'react-native',
+                service: pending.service,
+                onion: state.lastStart.onion,
+            };
+        }
+
+        if (typeof RnTor.initTorService !== 'function') throw new Error('RnTor.initTorService is required to start Tor without a hidden service');
+        const ok = await RnTor.initTorService({
+            socks_port: state.socksPort,
+            data_dir: dataDir,
+            timeout_ms: timeoutMs,
+        });
+        if (ok !== true) throw new Error('RnTor.initTorService returned false');
+
+        state.lastStart = { ts: Date.now(), service: null, localPort: null, virtualPort: null, onion: null, raw: { ok: true } };
+        return { ok: true, running: true, installed: true, mode: 'react-native' };
+    }
+
+    async function stop() {
+        const RnTor = loadRnTorOrThrow();
+        if (typeof RnTor.shutdownService !== 'function') throw new Error('RnTor.shutdownService is required');
+        const ok = await RnTor.shutdownService();
+        if (ok !== true) throw new Error('tor shutdown failed');
+        return { ok: true, running: false };
+    }
+
+    async function configureHiddenService(opts) {
+        requireObject(opts, 'opts');
+        const localPort = requirePort(opts.port, 'opts.port');
+        const virtualPort = (opts.virtualPort === undefined || opts.virtualPort === null) ? 80 : requirePort(opts.virtualPort, 'opts.virtualPort');
+
+        const service = (opts.service === undefined || opts.service === null) ? 'default' : String(opts.service);
+        if (!service.trim()) throw new Error('opts.service must be a non-empty string');
+
+        const keys = normalizeKeysOrThrow(opts.keys);
+        state.pendingHs = {
+            service,
+            localPort,
+            virtualPort,
+            keys,
+        };
+
+        return { ok: true, pending: true, service, localPort, virtualPort, keyCount: keys.length };
+    }
+
+    async function hiddenServicesStatus() {
+        const last = state.lastStart;
+        const pending = state.pendingHs;
+
+        const service = (last && last.service) ? last.service : (pending ? pending.service : null);
+        const localPort = (last && last.localPort) ? last.localPort : (pending ? pending.localPort : null);
+        const virtualPort = (last && last.virtualPort) ? last.virtualPort : (pending ? pending.virtualPort : null);
+
+        const onion = (last && last.onion) ? last.onion : null;
+        const results = onion ? [{ ok: true, service, localPort, virtualPort, onion }] : [];
+
+        return {
+            ok: true,
+            ts: last ? last.ts : null,
+            service,
+            localPort,
+            virtualPort,
+            results,
+        };
+    }
+
+    return {
+        // Electron API parity: install/uninstall are desktop-only.
+        start,
+        stop,
+        status,
+        info,
+        hiddenServices: {
+            create: configureHiddenService,
+            status: hiddenServicesStatus,
+        },
+    };
 }
 
-async function stop() {
-    const RnTor = loadRnTorOrThrow();
-    const ok = await RnTor.shutdownService();
-    if (ok !== true) throw new Error('tor shutdown failed');
-    return { ok: true };
-}
-
-async function status() {
-    // We can extend this once we confirm the react-native-nitro-tor status API.
-    throw new Error('tor.status not implemented for react-native yet');
-}
-
-module.exports = {
-    start,
-    stop,
-    status,
-};
+module.exports = createTorReactNativeApiOrThrow();

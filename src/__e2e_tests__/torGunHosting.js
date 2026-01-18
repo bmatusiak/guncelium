@@ -1,6 +1,20 @@
 import app from '../runtime/rectifyApp';
 import Gun from 'gun/gun';
-import 'gun/sea';
+import 'gun/sea.js';
+
+function isElectronRenderer() {
+    const root = (typeof globalThis !== 'undefined') ? globalThis : (typeof window !== 'undefined' ? window : null);
+    const hasDom = (typeof window === 'object' && window && typeof window.document !== 'undefined');
+    const hasBridge = !!(root && typeof root === 'object' && root.ElectronNative && typeof root.ElectronNative === 'object');
+    return hasDom && hasBridge;
+}
+
+function isReactNative() {
+    if (typeof navigator === 'object' && navigator && navigator.product === 'ReactNative') return true;
+    const root = (typeof globalThis !== 'undefined') ? globalThis : null;
+    if (root && typeof root === 'object' && root.__fbBatchedBridge) return true;
+    return false;
+}
 
 function requireObject(value, name) {
     if (!value || typeof value !== 'object') throw new Error(`${name} must be an object`);
@@ -245,6 +259,12 @@ export default {
     name: 'TorGunHosting',
     test: (h) => {
         if (!h || typeof h.describe !== 'function' || typeof h.it !== 'function') throw new Error('harness missing describe/it');
+
+        // This suite is Electron-renderer-only (uses ElectronNative + window.electron temp dir).
+        // True skip: do not register the suite when running under React Native.
+        if (!isElectronRenderer()) {
+            if (isReactNative()) return;
+        }
 
         h.describe('Tor: host Gun TCP as hidden service', () => {
             h.it('starts gun tcp, starts tor, creates HS, reports .onion', async ({ assert, log }) => {

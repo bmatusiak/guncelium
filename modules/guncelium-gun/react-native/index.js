@@ -8,6 +8,11 @@ function requireArray(value, name) {
     if (!Array.isArray(value)) throw new Error(`${name} must be an array`);
 }
 
+function requireObjectLike(value, name) {
+    const t = typeof value;
+    if (!value || (t !== 'object' && t !== 'function')) throw new Error(`${name} must be an object or function`);
+}
+
 function requireString(value, name) {
     if (typeof value !== 'string' || value.trim().length === 0) throw new Error(`${name} must be a non-empty string`);
 }
@@ -31,6 +36,13 @@ function normalizePeersOrThrow(peers) {
 
 function ensureNativeSeaInstalledOrThrow(Gun) {
     if (!Gun) throw new Error('Gun is required');
+
+    const root = (typeof globalThis !== 'undefined')
+        ? globalThis
+        : ((typeof global !== 'undefined') ? global : null);
+    if (!root || typeof root !== 'object') throw new Error('global root not available');
+    if (!root.window) root.window = root;
+
     // eslint-disable-next-line global-require
     const nativeSeaImport = require('native-sea');
     const nativeSea = (nativeSeaImport && nativeSeaImport.default) ? nativeSeaImport.default : nativeSeaImport;
@@ -46,9 +58,9 @@ function ensureNativeSeaInstalledOrThrow(Gun) {
 function createGunReactNativeApiOrThrow() {
     // DONT EDIT THESE REQUIRE LINES BELOW HERE (keeps Metro/bundlers happy)
     // eslint-disable-next-line global-require
-    const Gun = require('gun/src/index.js');
+    const Gun = require('gun/gun');
     // eslint-disable-next-line global-require
-    require('gun/sea/index.js');
+    require('gun/sea.js');
 
     ensureNativeSeaInstalledOrThrow(Gun);
 
@@ -79,7 +91,8 @@ function createGunReactNativeApiOrThrow() {
             peers,
             localStorage: false,
         });
-        if (!gun || typeof gun !== 'function') throw new Error('gun initialization failed');
+        requireObjectLike(gun, 'gun');
+        if (typeof gun.get !== 'function') throw new Error('gun initialization failed (missing get)');
 
         state.gun = gun;
         state.peers = peers;
@@ -93,7 +106,7 @@ function createGunReactNativeApiOrThrow() {
         state.gun = null;
         state.peers = [];
 
-        if (!gun || typeof gun !== 'function') throw new Error('gun instance must be a function');
+        requireObjectLike(gun, 'gun');
         if (typeof gun.off !== 'function') throw new Error('gun.off must be a function to stop gun');
         gun.off();
 

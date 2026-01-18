@@ -1,5 +1,5 @@
 import Gun from 'gun/gun';
-import 'gun/sea';
+import 'gun/sea.js';
 
 setup.consumes = ['app', 'gun'];
 setup.provides = ['gunClient'];

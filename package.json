@@ -20,6 +20,7 @@
     "expo": "~54.0.31",
     "expo-crypto": "~15.0.8",
     "expo-electron": "github:bmatusiak/expo-electron",
+    "expo-file-system": "~19.0.15",
     "expo-status-bar": "~3.0.9",
     "guncelium-gun": "file:modules/guncelium-gun",
     "guncelium-protocal": "file:modules/guncelium-protocal",
@@ -27,6 +28,7 @@
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
+    "react-native-nitro-tor": "github:bmatusiak/react-native-nitro-tor#5e12dc01a4ddbd8ec08884294e36e2af0a27bff4",
     "react-native-web": "^0.21.0",
     "test-moniker": "github:bmatusiak/test-moniker"
   },
