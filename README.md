@@ -206,3 +206,27 @@ This codebase follows a strict “fail-fast” philosophy:
 - No silent fallbacks
 - Parameter validation at boundaries
 - Errors are surfaced loudly (crash/throw rather than continuing invisibly)
+
+## Persistence (Gun store)
+
+**Goal:** SQLite-backed persistence should be the default Gun store across environments (Electron + React Native), so data can be reliably persisted and migrated.
+
+**Default SQLite file locations (planned):**
+
+- **Electron**: inside the app user-data directory (`app.getPath('userData')`), e.g. `<userData>/gun/guncelium.sqlite`.
+- **React Native / Expo**: inside the app document data directory, e.g. `FileSystem.documentDirectory + 'gun/guncelium.sqlite'`.
+- **Node (CLI / service)**: inside the project root (current working directory), e.g. `./gun/guncelium.sqlite`.
+
+These defaults are meant to be deterministic and local-first. Overrides should remain explicit (pass a path in options/flags) and errors should be fail-fast.
+
+**Current behavior (today):**
+
+- **Electron / Node**: Gun is started with `file: <userData>/gun/radata` (Gun’s built-in disk store). This is configured in [modules/guncelium-gun/main/index.js](modules/guncelium-gun/main/index.js).
+- **React Native / Expo**: the Gun wiring is focused on crypto (`native-sea`) and transport; a SQLite store is not yet wired as the default.
+
+**Planned behavior:**
+
+- Replace/override Gun persistence with a **SQLite-backed key/value store**.
+- Use a shared schema so Electron and RN can interoperate on the same logical storage model (RN likely via `expo-sqlite`; Node likely via a SQLite driver).
+
+This section describes intended direction; it does not imply SQLite persistence is already the default.
