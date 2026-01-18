@@ -1,292 +1,137 @@
+## Cross-platform TCP mesh (Node.js + React Native)
 
+This document is for people porting Gun (or writing a custom runtime) and wanting to participate in the Guncelium **framed TCP** mesh, either directly (LAN/WAN) or via Tor `.onion` peers.
 
-# Cross-Platform Tor Mesh Network Guide
+The canonical implementation lives in:
 
-This guide provides a unified implementation for a decentralized TCP mesh network. It solves cross-platform bundler issues (Metro/Webpack) by using **dependency injection**: you initialize the module *once* with your platform's socket library.
+- [modules/guncelium-protocal/socketAdapter.js](modules/guncelium-protocal/socketAdapter.js)
 
+This guide explains what that adapter expects and guarantees.
 
-## 1. The Core Engine (SocketAdapter.js)
+### Design goals
 
-This file exports a factory function. It returns a connect function for clients and a listen function for servers, handling all Tor SOCKS5 handshakes and binary framing internally.
+- **Same wire format** across Node and React Native.
+- **Dependency injection** for the raw socket library (avoid bundler issues).
+- **Fail-fast** behavior: malformed frames, invalid JSON, handshake failures, and exceeded limits terminate the connection.
+- **Hard bounds**: maximum frame sizes, maximum buffered bytes, bounded per-chunk decode work.
+
+## Wire format (framed TCP)
+
+All application messages are carried over a TCP stream using a simple framing layer:
+
+- Header: 5 bytes
+  - `u32be length` (payload length in bytes)
+  - `u8 type` (frame type)
+- Payload: `length` bytes
+
+Frame types (from `guncelium-protocal`):
+
+- `1` = `BINARY` (payload is raw bytes)
+- `2` = `HEARTBEAT` (payload length must be 0; used to keep idle connections alive)
+- `3` = `MESSAGE` (payload is UTF-8 JSON)
+
+### Important Gun compatibility note
+
+Gun mesh sometimes sends a JSON array batch string like `"[{...},{...}]"`.
+
+The adapter preserves this behavior:
+
+- If decoded JSON is an **array**, the adapter emits the **raw JSON string** as `onmessage({ data: text })`.
+- Otherwise it emits the parsed object as `onmessage({ data: object })`.
+
+If you change this, Gun may stop treating batches correctly.
+
+## `.onion` dial-out (SOCKS5)
+
+When dialing an address ending in `.onion`, the adapter connects to a local Tor SOCKS5 proxy (default `127.0.0.1:9050`) and performs a SOCKS5 handshake:
+
+- Auth method negotiation: no-auth (`0x00`)
+- CONNECT to a **domain name** address type (`0x03`) using the full hostname (including `.onion`)
+
+After the handshake completes, the stream switches to the framed TCP protocol above.
+
+The handshake is bounded:
+
+- A hard timeout (`handshakeTimeoutMs`, default 10s)
+- A small handshake buffer cap (512 bytes)
+
+## Runtime requirements
+
+Your platform must provide:
+
+- `TextEncoder` and `TextDecoder` (or equivalent). If not present, the adapter throws.
+- A socket library with Node-like methods:
+  - `createConnection(options, onConnect)`
+  - `createServer(onSocket)`
+  - raw socket emits `data`, `close`, `error` events and supports `write()` + `destroy()`/`end()`
+
+## Adapter API
+
+`createSocketAdapterOrThrow(lib, config)` returns:
+
+- `connect(address, port) -> Promise<Wire>`
+- `listen(port, onConnection, host?) -> Server`
+- `TYPES` (frame type constants)
+
+`Wire` is WebSocket-like:
+
+- `onopen`, `onmessage`, `onclose`, `onerror`
+- `send(objOrUint8Array)`
+- `close()`
+
+### Configuration knobs
+
+The adapter has strict defaults and supports overrides for ports and bounds:
+
+- `socksHost`, `socksPort`
+- `handshakeTimeoutMs`
+- `maxPayloadBytes`, `maxBufferedBytes`, `maxFramesPerChunk`
+- `heartbeatIntervalMs`, `idleTimeoutMs`
+
+## Minimal usage examples
+
+### Node.js (direct + onion)
 
 ```js
-const encoder = new TextEncoder(); 
-const decoder = new TextDecoder(); 
- 
-/** 
- * Initialize the Socket Adapter with a specific networking library. 
- * @param {object} lib - Node.js 'net' or 'react-native-tcp-socket' 
- */ 
-export default function createSocketAdapter(lib) { 
-  if (!lib) throw new Error("Networking library is required (net or react-native-tcp-socket)"); 
- 
-  /** 
-   * Internal wrapper class handling Framing, Heartbeats, and Tor 
-   */ 
-  class SocketAdapter { 
-    static TYPES = { BINARY: 1, HEARTBEAT: 2, MESSAGE: 3 }; 
-    static CONFIG = {  
-      INTERVAL: 20000,  
-      TIMEOUT: 60000,  
-      MAX_PAYLOAD: 10 * 1024 * 1024  
-    }; 
- 
-    constructor(socket, options = {}) { 
-      this.socket = socket; 
-      this.lastSeen = Date.now(); 
-      this.buffer = new Uint8Array(0); 
-      this.readyState = 0; // 0 = CONNECTING, 1 = OPEN, 3 = CLOSED 
-      this.bufferedAmount = 0; 
-       
-      this.onmessage = null; 
-      this.onopen = null; 
-      this.onclose = null; 
-      this.onerror = null; 
- 
-      // Handle Tor Handshake or Direct Init 
-      if (options.onion) { 
-        this._handshake(options.onion, options.port || 8888); 
-      } else { 
-        this._init(); 
-      } 
-    } 
- 
-    _handshake(targetOnion, targetPort) { 
-      let step = 0; 
-      this._writeRaw(new Uint8Array([0x05, 0x01, 0x00])); 
- 
-      const onHandshakeData = (data) => { 
-        if (step === 0) { 
-          if (data.length &lt; 2 || data[0] !== 0x05 || data[1] !== 0x00) { 
-            return this._fail('SOCKS5 Auth Rejected'); 
-          } 
-          step = 1; 
-          const domainBuf = encoder.encode(targetOnion); 
-          const request = new Uint8Array(7 + domainBuf.length); 
-          request.set([0x05, 0x01, 0x00, 0x03, domainBuf.length]); 
-          request.set(domainBuf, 5); 
-          const view = new DataView(request.buffer, request.byteOffset, request.byteLength); 
-          view.setUint16(request.length - 2, targetPort, false); 
-          this._writeRaw(request); 
-          return; 
-        } 
-        if (step === 1) { 
-          if (data.length &lt; 2 || data[0] !== 0x05 || data[1] !== 0x00) { 
-             return this._fail(`SOCKS5 Connect Failed: Code ${data[1]}`); 
-          } 
-          this.socket.removeListener('data', onHandshakeData); 
-          console.log(`[Socket] Tor Tunnel established to ${targetOnion}`); 
-          this._init(); 
-        } 
-      }; 
- 
-      this.socket.on('data', onHandshakeData); 
-      this.socket.on('error', (err) => this._fail(err.message)); 
-    } 
- 
-    _fail(reason) { 
-      this.socket.destroy(); 
-      if (this.onerror) this.onerror(new Error(reason)); 
-    } 
- 
-    _init() { 
-      this.readyState = 1;  
- 
-      this.pulse = setInterval(() => { 
-        if (Date.now() - this.lastSeen > SocketAdapter.CONFIG.TIMEOUT) return this.close(); 
-        this._write(this._encode(null, SocketAdapter.TYPES.HEARTBEAT)); 
-      }, SocketAdapter.CONFIG.INTERVAL); 
- 
-      this.socket.on('data', (chunk) => { 
-        const combined = new Uint8Array(this.buffer.length + chunk.length); 
-        combined.set(this.buffer);  
-        combined.set(chunk, this.buffer.length); 
-        this.buffer = this._decode(combined, (msg) => { 
-          this.lastSeen = Date.now(); 
-          if (this.onmessage) this.onmessage({ data: msg.data }); 
-        }); 
-      }); 
- 
-      this.socket.on('drain', () => { this.bufferedAmount = 0; }); 
-      this.socket.on('close', () => this.close()); 
-      this.socket.on('error', (err) => { 
-        if (this.onerror) this.onerror(err); 
-        this.close(); 
-      }); 
- 
-      // Async open trigger 
-      setTimeout(() => { if(this.onopen) this.onopen(); }, 0); 
-    } 
- 
-    _writeRaw(data) { if (!this.socket.destroyed) this.socket.write(data); } 
-     
-    _write(data) { 
-      if (this.socket.destroyed) return false; 
-      const success = this.socket.write(data); 
-      if (!success) this.bufferedAmount += data.length; 
-      return success; 
-    } 
- 
-    send(data) { 
-      if (this.readyState !== 1) return; 
-      const encoded = (data instanceof Uint8Array)  
-        ? this._encode(data, SocketAdapter.TYPES.BINARY) 
-        : this._encode(data, SocketAdapter.TYPES.MESSAGE); 
-      this._write(encoded); 
-    } 
- 
-    close() { 
-      if (this.readyState === 3) return; 
-      this.readyState = 3; 
-      if (this.pulse) clearInterval(this.pulse); 
-      this.socket.destroy(); 
-      if (this.onclose) this.onclose(); 
-    } 
- 
-    _encode(data, type) { 
-      let payload = type === SocketAdapter.TYPES.MESSAGE ? encoder.encode(JSON.stringify(data)) : (data || new Uint8Array(0)); 
-      const header = new ArrayBuffer(5); 
-      new DataView(header).setUint32(0, payload.length, false); 
-      new DataView(header).setUint8(4, type); 
-      const combined = new Uint8Array(5 + payload.length); 
-      combined.set(new Uint8Array(header), 0); 
-      combined.set(payload, 5); 
-      return combined; 
-    } 
- 
-    _decode(uint8Array, onMessage) { 
-      let offset = 0; 
-      while (offset + 5 &lt;= uint8Array.length) { 
-        const view = new DataView(uint8Array.buffer, uint8Array.byteOffset + offset, 5); 
-        const length = view.getUint32(0, false); 
-        const type = view.getUint8(4); 
- 
-        if (length > SocketAdapter.CONFIG.MAX_PAYLOAD) { 
-          this.close(); 
-          return new Uint8Array(0);  
-        } 
- 
-        if (offset + 5 + length &lt;= uint8Array.length) { 
-          const payload = uint8Array.slice(offset + 5, offset + 5 + length); 
-          if (type === SocketAdapter.TYPES.MESSAGE) { 
-            try { onMessage({ data: JSON.parse(decoder.decode(payload)) }); } catch (e) {} 
-          } else if (type === SocketAdapter.TYPES.BINARY) { 
-            onMessage({ data: payload }); 
-          } 
-          offset += 5 + length; 
-        } else break; 
-      } 
-      return uint8Array.slice(offset); 
-    } 
-  } 
- 
-  // --- Public API --- 
- 
-  return { 
-    /** 
-     * Connect to a peer (Client Mode) 
-     * @param {string} address - IP, Domain, or .onion 
-     * @param {number} port - Port number 
-     * @returns {Promise&lt;SocketAdapter>} 
-     */ 
-    connect: (address, port) => { 
-      const isOnion = address.endsWith('.onion'); 
-      const options = isOnion ? { host: '127.0.0.1', port: 9050 } : { host: address, port }; 
- 
-      return new Promise((resolve, reject) => { 
-        const raw = lib.createConnection(options, () => { 
-          const ws = new SocketAdapter(raw, isOnion ? { onion: address, port } : {}); 
-          ws.onopen = () => resolve(ws); 
-        }); 
-        raw.on('error', reject); 
-      }); 
-    }, 
- 
-    /** 
-     * Listen for incoming connections (Server Mode) 
-     * @param {number} port - Port to listen on (e.g. 8888) 
-     * @param {function(SocketAdapter)} onConnection - Callback for new peers 
-     * @returns {object} The raw server instance 
-     */ 
-    listen: (port, onConnection) => { 
-      const server = lib.createServer((rawSocket) => { 
-        // Incoming connection! Wrap it immediately. 
-        const peer = new SocketAdapter(rawSocket); 
-        if (onConnection) onConnection(peer); 
-      }); 
-       
-      server.listen(port, () => { 
-        console.log(`[Socket] Server listening on port ${port}`); 
-      }); 
-       
-      return server; 
-    } 
-  }; 
-} 
+const net = require('net');
+const { createSocketAdapterOrThrow } = require('guncelium-protocal');
+
+const Net = createSocketAdapterOrThrow(net, {
+  socksHost: '127.0.0.1',
+  socksPort: 9050,
+});
+
+Net.listen(8888, (peer) => {
+  peer.onmessage = (m) => {
+    // m.data is either an object OR a JSON string for Gun batch arrays.
+    console.log('server got', typeof m.data, m.data);
+  };
+});
+
+Net.connect('exampleonionhostnameeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.onion', 8888)
+  .then((peer) => peer.send({ hello: 'from node' }))
+  .catch((e) => { throw e; });
 ```
 
+### React Native (TCP socket DI)
 
-## 2. Usage Examples
-
-
-### A. React Native (App.js)
 ```js
-import React, { useEffect } from 'react'; 
-import TcpSocket from 'react-native-tcp-socket'; 
-import createSocketAdapter from './SocketAdapter'; 
- 
-// 1. Initialize the Adapter with the React Native library 
-const Net = createSocketAdapter(TcpSocket); 
- 
-export default function App() { 
-  useEffect(() => { 
-    // Start Server 
-    const server = Net.listen(8888, (peer) => { 
-      console.log('New peer connected!'); 
-      peer.onmessage = (msg) => console.log('Server received:', msg.data); 
-    }); 
- 
-    // Connect to a Tor Peer 
-    async function connectToTor() { 
-      try { 
-        const peer = await Net.connect('vww6ybal4bd7szmgncyruucpg.onion', 8888); 
-        peer.send({ msg: 'Hello from RN!' }); 
-      } catch (err) { 
-        console.error(err); 
-      } 
-    } 
-     
-    connectToTor(); 
- 
-    return () => server.close(); 
-  }, []); 
- 
-  return null; 
-} 
+import TcpSocket from 'react-native-tcp-socket';
+import { createSocketAdapterOrThrow } from 'guncelium-protocal';
+
+const Net = createSocketAdapterOrThrow(TcpSocket, {
+  socksHost: '127.0.0.1',
+  socksPort: 9050,
+});
+
+export function connectOnceOrThrow(onionHost, virtualPort) {
+  return Net.connect(onionHost, virtualPort);
+}
 ```
 
+Notes:
 
-### B. Node.js (index.js)
-```js
-import net from 'net'; 
-import createSocketAdapter from './SocketAdapter.js'; 
+- On mobile, you must start Tor and ensure a reachable SOCKS port before connecting to `.onion` peers.
+- For Gun integration, you typically feed `Wire` into Gun mesh as a “wire” (see how Electron does it in `modules/guncelium-gun/main/index.js`).
  
-// 1. Initialize the Adapter with Node's net library 
-const Net = createSocketAdapter(net); 
- 
-// Start Server 
-Net.listen(8888, (peer) => { 
-  console.log('[Node] Incoming peer connection'); 
-  peer.send({ status: 'Welcome to the Node Gateway' }); 
-}); 
- 
-// Connect to a LAN Peer 
-Net.connect('192.168.1.50', 8888) 
-  .then(peer => { 
-    console.log('[Node] Connected to LAN peer'); 
-    peer.send({ type: 'handshake', id: 'node-1' }); 
-  }) 
-  .catch(err => console.error('Connection failed', err)); 
-
-```
 
