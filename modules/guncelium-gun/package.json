@@ -6,12 +6,15 @@
   "author": "",
   "type": "commonjs",
   "main": "index.js",
+  "react-native": "react-native/index.js",
   "dependencies": {
     "gun": "github:amark/gun",
     "gun-rebuild": "github:bmatusiak/gun-rebuild",
     "gun-rebuild-sea": "github:bmatusiak/gun-rebuild-sea",
     "gun-unbuild": "github:bmatusiak/gun-unbuild",
-    "guncelium-protocal": "file:../guncelium-protocal"
+    "guncelium-protocal": "file:../guncelium-protocal",
+    "native-sea": "github:bmatusiak/native-sea",
+    "native-sea-openssl": "https://github.com/bmatusiak/native-sea-openssl/releases/download/v3.5.4/native-sea-openssl.tar.gz"
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"

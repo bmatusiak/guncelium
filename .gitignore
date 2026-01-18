@@ -34,27 +34,5 @@ yarn-error.*
 
 # typescript
 *.tsbuildinfo
-modules/example-native-module/.gitignore
-modules/example-native-module/expo-module.config.json
-modules/example-native-module/index.js
-modules/example-native-module/package.json
-modules/example-native-module/README.md
-modules/example-native-module/android/build.gradle
-modules/example-native-module/android/src/main/AndroidManifest.xml
-modules/example-native-module/android/src/main/java/expo/modules/examplenativemodule/ExampleNativeModule.kt
-modules/example-native-module/android/src/main/java/expo/modules/examplenativemodule/ExampleNativeModuleView.kt
-modules/example-native-module/electron/.gitignore
-modules/example-native-module/electron/binding.gyp
-modules/example-native-module/electron/index.js
-modules/example-native-module/electron/package.json
-modules/example-native-module/electron/scripts/node-addon-include.js
-modules/example-native-module/electron/src/addon.cc
-modules/example-native-module/ios/ExampleNativeModule.podspec
-modules/example-native-module/ios/ExampleNativeModule.swift
-modules/example-native-module/ios/ExampleNativeModuleView.swift
-modules/example-native-module/src/ExampleNativeModule.js
-modules/example-native-module/src/ExampleNativeModule.types.js
-modules/example-native-module/src/ExampleNativeModule.web.js
-modules/example-native-module/src/ExampleNativeModuleView.electron.jsx
-modules/example-native-module/src/ExampleNativeModuleView.jsx
-modules/example-native-module/src/ExampleNativeModuleView.web.jsx
+modules/example-native-module
+.tmp*

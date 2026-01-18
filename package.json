@@ -18,6 +18,7 @@
   "dependencies": {
     "@bmatusiak/rectify": "github:bmatusiak/rectify",
     "expo": "~54.0.31",
+    "expo-crypto": "~15.0.8",
     "expo-electron": "github:bmatusiak/expo-electron",
     "expo-status-bar": "~3.0.9",
     "guncelium-gun": "file:modules/guncelium-gun",

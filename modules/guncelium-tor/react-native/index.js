@@ -18,6 +18,39 @@ function requireArray(value, name) {
     if (!Array.isArray(value)) throw new Error(`${name} must be an array`);
 }
 
+function normalizeKeysOrThrow(keys) {
+    requireArray(keys, 'opts.keys');
+    if (keys.length < 1) throw new Error('opts.keys must have at least 1 entry');
+
+    // eslint-disable-next-line global-require
+    const onion = require('../onion');
+    if (!onion || typeof onion !== 'object') throw new Error('guncelium-tor/onion did not export an object');
+    if (typeof onion.generateV3OnionVanity !== 'function') throw new Error('guncelium-tor/onion.generateV3OnionVanity is required');
+
+    const out = [];
+    for (let i = 0; i < keys.length; i++) {
+        const k = keys[i];
+        if (!k || typeof k !== 'object') throw new Error(`opts.keys[${i}] must be an object`);
+
+        if (k.generate === true && k.vanity) {
+            const gen = onion.generateV3OnionVanity({
+                prefix: String(k.vanity),
+                maxAttempts: (k.maxAttempts === undefined || k.maxAttempts === null) ? 250000 : Number(k.maxAttempts),
+            });
+            out.push({
+                onion: gen.onion,
+                seed_hex: gen.seed_hex,
+                pub_hex: gen.pub_hex,
+                generate: false,
+            });
+            continue;
+        }
+
+        out.push(k);
+    }
+    return out;
+}
+
 function loadRnTorOrThrow() {
     // This dependency is expected to exist only in RN builds.
     // Fail-fast if it's missing.
@@ -43,8 +76,7 @@ async function start(opts) {
     const timeoutMs = (opts.timeoutMs === undefined || opts.timeoutMs === null) ? 60000 : Number(opts.timeoutMs);
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('opts.timeoutMs must be a positive number');
 
-    requireArray(opts.keys, 'opts.keys');
-    if (opts.keys.length < 1) throw new Error('opts.keys must have at least 1 entry');
+    const keys = normalizeKeysOrThrow(opts.keys);
 
     const RnTor = loadRnTorOrThrow();
     const result = await RnTor.startTorIfNotRunning({
@@ -52,7 +84,7 @@ async function start(opts) {
         socks_port: socksPort,
         target_port: targetPort,
         timeout_ms: timeoutMs,
-        keys: opts.keys,
+        keys,
     });
 
     if (!result || typeof result !== 'object') throw new Error('RnTor.startTorIfNotRunning returned non-object');
