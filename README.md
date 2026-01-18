@@ -14,6 +14,65 @@ It combines:
 
 The long-term goal is a resilient “digital root system”: data lives in the user’s own hardware, and devices can synchronize opportunistically (online or offline) across multiple mediums.
 
+## Project goals (why this repo exists)
+
+This project is meant to tie together multiple experiments into one coherent system, with two major goals:
+
+1) **Connectivity**: a consistent networking story across three environments.
+2) **Serviceability**: one codebase that can run as a background service, a desktop app, and a mobile app.
+
+### Mental model
+
+Think of Guncelium as a **multi-transport Gun network**:
+
+- **Gun is the shared graph** and sync logic.
+- **Transports are adapters**:
+	- **HTTP/WS** for browsers and “web-style” peers.
+	- **Framed TCP** for direct sockets and Tor onion services.
+	- **Tor** provides stable reachability (hidden services) and `.onion` dial-out via SOCKS5.
+	- **WebRTC** is a future transport for lower-latency browser↔browser links.
+
+The core objective is that every environment participates in the *same* network, even if each environment uses different transports to do it.
+
+### Connectivity: 3 target environments
+
+- **Node.js (headless / background node)**
+	- Role: a always-on “service node” that can run without UI.
+	- Provides an **HTTP/WS Gun endpoint** so browsers (and other web-style peers) can join the network.
+	- Also participates in the **Tor onion mesh** and can host/connect to framed TCP peers.
+	- Future direction: add **WebRTC** so browsers can mesh faster when available, while still having Tor/TCP as the resilient baseline.
+
+- **Electron (desktop)**
+	- Electron has three layers: **main** / **preload** / **renderer**.
+	- **Main = service host**
+		- Owns the long-lived service instances: Tor process + hidden services, Gun instance(s), and framed TCP listeners.
+		- Exposes both “service-node style” interfaces:
+			- HTTP/WS for browser-style Gun peers.
+			- framed TCP for Tor hidden-service hosting and direct TCP peers.
+	- **Preload = capability bridge**
+		- Exposes a controlled API to the renderer (e.g. `window.ElectronNative.*`) so the UI can start/stop/query Tor and Gun without giving the renderer full Node privileges.
+	- **Renderer = UI + browser peer**
+		- Displays status and control panels.
+		- Runs a browser-style Gun client that connects to the HTTP/WS endpoint hosted by **main**.
+		- This keeps desktop behavior consistent with the Node.js “background node” model: main provides services; renderer consumes them like a browser would.
+
+- **React Native (mobile)**
+	- Role: a mobile peer that should be able to host and join the mesh with minimal infrastructure.
+	- Focuses on **framed TCP** + Tor connectivity:
+		- Dial `.onion` peers via Tor SOCKS5.
+		- Host a framed TCP listener and publish it via a Tor v3 hidden service.
+	- Future direction: expand toward **WebRTC** where feasible, but keep the TCP/Tor path as the deterministic baseline.
+
+### Serviceability: one codebase
+
+Using Expo plus `expo-electron` is a key design choice: it bridges “service mode”, desktop, and mobile while sharing as much code and behavior as possible.
+
+Practically, this means:
+
+- Shared UI and runtime composition (Expo app) across desktop and mobile.
+- Shared module APIs in `modules/`, with environment-specific entrypoints (Node/Electron/RN) selected by the bundler/runtime.
+- Electron main behaves like a local “service node” so the renderer can stay closer to a browser-like environment.
+
 ## Architecture (high-level)
 
 - **Control Plane**: Tor (onion identities, hidden services, NAT traversal via onion routing)
