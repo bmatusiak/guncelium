@@ -2,7 +2,9 @@
 
 const assert = require('node:assert');
 const { spawn } = require('node:child_process');
-const net = require('node:net');
+const { spawnSync } = require('node:child_process');
+const fs = require('node:fs');
+const path = require('node:path');
 const readline = require('node:readline');
 
 function requireInt(value, name, min, max) {
@@ -12,38 +14,72 @@ function requireInt(value, name, min, max) {
 }
 
 const MAX_WAIT_MS = 6 * 60 * 60 * 1000; // 6 hours (bounded)
+const MAX_ADB_MS = 15000;
+const EXPO_PORT = 8081;
 
-async function isPortFreeOrThrow(port) {
-    const p = requireInt(port, 'port', 1, 65535);
-    return await new Promise((resolve, reject) => {
-        const server = net.createServer();
-        server.once('error', (e) => {
-            const code = e && e.code ? String(e.code) : '';
-            if (code === 'EADDRINUSE' || code === 'EACCES') {
-                resolve(false);
-                return;
-            }
-            reject(e);
-        });
-        server.once('listening', () => {
-            server.close((err) => {
-                if (err) reject(err);
-                else resolve(true);
-            });
-        });
-        server.listen({ host: '127.0.0.1', port: p });
-    });
+function readJsonFileOrThrow(filePath) {
+    assert(typeof filePath === 'string' && filePath.length > 0, 'filePath required');
+    const raw = fs.readFileSync(filePath, { encoding: 'utf8' });
+    assert(typeof raw === 'string' && raw.length > 0, 'file content required');
+    return JSON.parse(raw);
 }
 
-async function pickPortOrThrow(ports) {
-    assert(Array.isArray(ports) && ports.length > 0, 'ports must be a non-empty array');
-    for (let i = 0; i < ports.length; i++) {
-        const p = requireInt(ports[i], `ports[${i}]`, 1, 65535);
-        // eslint-disable-next-line no-await-in-loop
-        const free = await isPortFreeOrThrow(p);
-        if (free) return p;
+function getAndroidPackageOrThrow() {
+    const override = process.env.GUNCELIUM_ANDROID_PACKAGE;
+    if (typeof override === 'string' && override.length > 0) return override;
+
+    const appJsonPath = path.join(process.cwd(), 'app.json');
+    const appJson = readJsonFileOrThrow(appJsonPath);
+
+    const pkg = appJson
+        && appJson.expo
+        && appJson.expo.android
+        && appJson.expo.android.package;
+
+    assert(typeof pkg === 'string' && pkg.length > 0, 'expo.android.package missing in app.json');
+    return pkg;
+}
+
+function runAdbOrThrow(args, timeoutMs) {
+    assert(Array.isArray(args) && args.length > 0, 'adb args required');
+    const t = requireInt(timeoutMs, 'timeoutMs', 1, MAX_WAIT_MS);
+    const res = spawnSync('adb', args, { encoding: 'utf8', timeout: t });
+    assert(res && typeof res.status === 'number', 'adb did not return a status');
+    if (res.error) throw res.error;
+    if (res.status !== 0) {
+        const out = String(res.stdout || '').trim();
+        const err = String(res.stderr || '').trim();
+        throw new Error(`adb ${args.join(' ')} failed (status=${String(res.status)}): ${err || out}`);
     }
-    throw new Error('no free port found in fixed port list');
+    return { stdout: String(res.stdout || ''), stderr: String(res.stderr || '') };
+}
+
+function pickAdbSerialOrThrow() {
+    const envSerial = process.env.ANDROID_SERIAL || process.env.GUNCELIUM_ANDROID_SERIAL;
+    if (typeof envSerial === 'string' && envSerial.length > 0) return envSerial;
+
+    const { stdout } = runAdbOrThrow(['devices', '-l'], MAX_ADB_MS);
+    const lines = String(stdout).split(/\r?\n/);
+    const serials = [];
+    for (let i = 0; i < lines.length; i++) {
+        const line = String(lines[i]).trim();
+        if (!line || line.startsWith('List of devices attached')) continue;
+        // Format: <serial>\tdevice ...
+        const parts = line.split(/\s+/);
+        if (parts.length < 2) continue;
+        if (parts[1] !== 'device') continue;
+        serials.push(parts[0]);
+    }
+
+    if (serials.length === 0) throw new Error('no adb devices detected (connect/emulator and ensure adb works)');
+    if (serials.length !== 1) throw new Error(`multiple adb devices detected; set ANDROID_SERIAL to one of: ${serials.join(', ')}`);
+    return serials[0];
+}
+
+function adbForceStopOrThrow(serial, androidPackage) {
+    assert(typeof serial === 'string' && serial.length > 0, 'serial required');
+    assert(typeof androidPackage === 'string' && androidPackage.length > 0, 'androidPackage required');
+    runAdbOrThrow(['-s', serial, 'shell', 'am', 'force-stop', androidPackage], MAX_ADB_MS);
 }
 
 function parseMonikerCompleteOrNull(line) {
@@ -187,10 +223,14 @@ function pumpLinesOrThrow(child, onLine) {
 }
 
 async function mainOrThrow() {
+    // Ensure the app cold-starts so it reloads reliably.
+    const androidPackage = getAndroidPackageOrThrow();
+    const serial = pickAdbSerialOrThrow();
+    adbForceStopOrThrow(serial, androidPackage);
+
     // IMPORTANT: we need to own the log stream that prints Moniker output.
     // Use expo start (bundler) and launch Android from it.
-    const port = await pickPortOrThrow([8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088, 8089, 8090, 8091]);
-    const bundler = spawnExpoOrThrow(['start', '--dev-client', '--android', '--port', String(port)]);
+    const bundler = spawnExpoOrThrow(['start', '--dev-client', '--android', '--port', String(EXPO_PORT)]);
 
     let done = false;
     let desiredExitCode = null;

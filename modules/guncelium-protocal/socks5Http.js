@@ -1,5 +1,7 @@
 'use strict';
 
+const { socks5HttpGetWithCreateConnectionOrThrow } = require('./socks5HttpCore');
+
 function requireObject(value, name) {
     if (!value || typeof value !== 'object') throw new Error(`${name} must be an object`);
 }
@@ -113,101 +115,13 @@ function parseHttpResponseOrThrow(buf) {
 async function socks5HttpGetOrThrow(opts) {
     requireObject(opts, 'opts');
 
-    const socksHost = String(opts.socksHost || '127.0.0.1');
-    const socksPort = requirePositiveInt(opts.socksPort, 'opts.socksPort', 65535);
-    const targetHost = String(opts.targetHost || '').trim();
-    if (!targetHost) throw new Error('opts.targetHost must be non-empty');
-    const targetPort = requirePositiveInt(opts.targetPort, 'opts.targetPort', 65535);
-    const timeoutMs = requirePositiveInt(opts.timeoutMs, 'opts.timeoutMs', 120000);
-    const maxBytes = requirePositiveInt(opts.maxBytes, 'opts.maxBytes', 1024 * 1024);
-
     // eslint-disable-next-line global-require
     const TcpSocket = require('react-native-tcp-socket');
     requireTcpSocketOrThrow(TcpSocket);
 
-    if (typeof Buffer === 'undefined') throw new Error('global Buffer is required');
-
-    return await new Promise((resolve, reject) => {
-        let settled = false;
-        let phase = 'greeting';
-        let inBuf = Buffer.alloc(0);
-        let httpBuf = Buffer.alloc(0);
-        let timer = null;
-
-        const socket = TcpSocket.createConnection({ host: socksHost, port: socksPort });
-
-        const cleanup = () => {
-            try { if (timer) clearTimeout(timer); } catch (_e0) { }
-            try { socket.destroy(); } catch (_e1) { }
-        };
-
-        const fail = (e) => {
-            if (settled) return;
-            settled = true;
-            cleanup();
-            reject(e);
-        };
-
-        const finish = (value) => {
-            if (settled) return;
-            settled = true;
-            cleanup();
-            resolve(value);
-        };
-
-        timer = setTimeout(() => fail(new Error('SOCKS5 httpGet timeout')), timeoutMs);
-
-        socket.on('error', (e) => {
-            const msg = e && e.message ? e.message : String(e);
-            fail(new Error(`SOCKS5 socket error: ${msg}`));
-        });
-
-        socket.on('close', () => {
-            if (phase === 'http') {
-                try {
-                    finish(parseHttpResponseOrThrow(httpBuf));
-                } catch (e) {
-                    fail(e);
-                }
-                return;
-            }
-            if (!settled) fail(new Error(`SOCKS5 socket closed during phase=${phase}`));
-        });
-
-        socket.on('connect', () => {
-            socket.write(buildSocks5Greeting());
-        });
-
-        socket.on('data', (chunk) => {
-            if (settled) return;
-
-            try {
-                inBuf = appendBufferBoundedOrThrow(inBuf, chunk, 1024);
-
-                if (phase === 'greeting') {
-                    const g = parseSocks5GreetingReplyOrThrow(inBuf);
-                    if (!g) return;
-                    inBuf = inBuf.slice(g.consumed);
-                    socket.write(buildSocks5ConnectDomainOrThrow(targetHost, targetPort));
-                    phase = 'connect';
-                }
-
-                if (phase === 'connect') {
-                    const r = parseSocks5ConnectReplyOrThrow(inBuf);
-                    if (!r) return;
-                    inBuf = inBuf.slice(r.consumed);
-                    socket.write(buildHttpGetRequestOrThrow(targetHost));
-                    phase = 'http';
-                }
-
-                if (phase === 'http') {
-                    httpBuf = appendBufferBoundedOrThrow(httpBuf, inBuf, maxBytes);
-                    inBuf = Buffer.alloc(0);
-                }
-            } catch (e) {
-                fail(e);
-            }
-        });
+    return socks5HttpGetWithCreateConnectionOrThrow({
+        ...opts,
+        createConnection: ({ host, port }) => TcpSocket.createConnection({ host, port }),
     });
 }
 
