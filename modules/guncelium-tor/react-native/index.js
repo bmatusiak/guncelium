@@ -52,24 +52,104 @@ function normalizeKeysOrThrow(keys) {
 }
 
 function loadRnTorOrThrow() {
-    // This dependency is expected to exist only in RN builds.
-    // Fail-fast if it's missing.
+    // IMPORTANT:
+    // The react-native-nitro-tor "RnTor" JS wrapper spreads a NitroModule proxy into a plain object.
+    // NitroModule methods are not enumerable, so the spread drops most methods (like getServiceStatus).
+    // Use the underlying native NitroModule directly.
     // eslint-disable-next-line global-require
-    const mod = require('react-native-nitro-tor');
-    if (!mod || typeof mod !== 'object') throw new Error('react-native-nitro-tor did not export an object');
+    const nativeMod = require('react-native-nitro-tor/src/NativeReactNativeNitroTor');
+    if (!nativeMod) throw new Error('react-native-nitro-tor/src/NativeReactNativeNitroTor is required');
 
-    const RnTor = mod.RnTor;
-    if (!RnTor || typeof RnTor !== 'object') throw new Error('react-native-nitro-tor.RnTor is required');
-    if (typeof RnTor.startTorIfNotRunning !== 'function') throw new Error('RnTor.startTorIfNotRunning is required');
-    if (typeof RnTor.shutdownService !== 'function') throw new Error('RnTor.shutdownService is required');
-    return RnTor;
+    const NativeTor = (nativeMod && typeof nativeMod === 'object' && nativeMod.default)
+        ? nativeMod.default
+        : nativeMod;
+
+    if (!NativeTor || typeof NativeTor !== 'object') throw new Error('NativeTor must be an object');
+    if (typeof NativeTor.startTorIfNotRunning !== 'function') throw new Error('NativeTor.startTorIfNotRunning is required');
+    if (typeof NativeTor.getServiceStatus !== 'function') throw new Error('NativeTor.getServiceStatus is required');
+    if (typeof NativeTor.shutdownService !== 'function') throw new Error('NativeTor.shutdownService is required');
+
+    return {
+        initTorService: NativeTor.initTorService ? NativeTor.initTorService.bind(NativeTor) : undefined,
+        createHiddenService: NativeTor.createHiddenService ? NativeTor.createHiddenService.bind(NativeTor) : undefined,
+        deleteHiddenService: NativeTor.deleteHiddenService ? NativeTor.deleteHiddenService.bind(NativeTor) : undefined,
+        getServiceStatus: NativeTor.getServiceStatus.bind(NativeTor),
+        shutdownService: NativeTor.shutdownService.bind(NativeTor),
+        httpGet: NativeTor.httpGet ? NativeTor.httpGet.bind(NativeTor) : undefined,
+        httpPost: NativeTor.httpPost ? NativeTor.httpPost.bind(NativeTor) : undefined,
+        httpPut: NativeTor.httpPut ? NativeTor.httpPut.bind(NativeTor) : undefined,
+        httpDelete: NativeTor.httpDelete ? NativeTor.httpDelete.bind(NativeTor) : undefined,
+        async startTorIfNotRunning(params) {
+            if (!params || typeof params !== 'object') throw new Error('startTorIfNotRunning params must be an object');
+            const { keys, ...rest } = params;
+
+            const nativeParams = {
+                ...rest,
+                keys_json: (keys && Array.isArray(keys) && keys.length > 0) ? JSON.stringify(keys) : '',
+            };
+
+            const nativeResp = await NativeTor.startTorIfNotRunning(nativeParams);
+            if (!nativeResp || typeof nativeResp !== 'object') throw new Error('NativeTor.startTorIfNotRunning returned non-object');
+
+            let onion_addresses;
+            if (nativeResp.onion_addresses_json) {
+                try {
+                    const parsed = JSON.parse(nativeResp.onion_addresses_json);
+                    if (Array.isArray(parsed)) onion_addresses = parsed.filter((x) => typeof x === 'string');
+                } catch (_e) {
+                    onion_addresses = undefined;
+                }
+            }
+
+            return {
+                ...nativeResp,
+                onion_addresses,
+            };
+        },
+    };
+}
+
+function fileUriToPathOrThrow(fileUri, name) {
+    requireString(fileUri, name);
+    const u = String(fileUri);
+    if (!u.startsWith('file://')) throw new Error(`${name} must start with file://`);
+    const p = u.replace(/^file:\/\/+/, '/');
+    if (!p.startsWith('/')) throw new Error(`${name} must convert to an absolute path`);
+    return p;
+}
+
+function pathToFileUriOrThrow(pathValue, name) {
+    requireString(pathValue, name);
+    const p = String(pathValue);
+    if (!p.startsWith('/')) throw new Error(`${name} must be an absolute path starting with /`);
+    const uri = `file://${p}`;
+    return uri.replace(/^file:\/\/+/, 'file:///');
 }
 
 function stripOnionSuffix(value) {
     if (value === undefined || value === null) return null;
+    let s = String(value).trim();
+    if (!s) return null;
+
+    // Accept common forms:
+    // - <host>.onion
+    // - <host>.onion:<port>
+    // - http://<host>.onion[:port]/...
+    const schemeIdx = s.indexOf('://');
+    if (schemeIdx >= 0) s = s.slice(schemeIdx + 3);
+    const slashIdx = s.indexOf('/');
+    if (slashIdx >= 0) s = s.slice(0, slashIdx);
+    const colonIdx = s.lastIndexOf(':');
+    if (colonIdx >= 0) s = s.slice(0, colonIdx);
+
+    return s.replace(/\.onion$/i, '');
+}
+
+function normalizeOnionAddress(value) {
+    if (value === undefined || value === null) return null;
     const s = String(value).trim();
     if (!s) return null;
-    return s.replace(/\.onion$/i, '');
+    return s;
 }
 
 function requirePositiveNumber(value, name) {
@@ -94,7 +174,7 @@ function isRunningFromStatusCode(code) {
 function createTorReactNativeApiOrThrow() {
     const state = {
         dataDir: null,
-        socksPort: 8765,
+        socksPort: 9050,
         timeoutMs: 60000,
         pendingHs: null,
         lastStart: null,
@@ -103,15 +183,17 @@ function createTorReactNativeApiOrThrow() {
     async function ensureDataDirOrThrow() {
         if (state.dataDir) return state.dataDir;
 
+        // expo-file-system exports legacy function stubs from the root that throw at runtime.
+        // Use the legacy module for stable documentDirectory + makeDirectoryAsync.
         // eslint-disable-next-line global-require
-        const FS = require('expo-file-system');
-        if (!FS || typeof FS !== 'object') throw new Error('expo-file-system did not export an object');
-        if (typeof FS.documentDirectory !== 'string' || FS.documentDirectory.trim().length === 0) throw new Error('expo-file-system.documentDirectory is required');
-        if (typeof FS.makeDirectoryAsync !== 'function') throw new Error('expo-file-system.makeDirectoryAsync is required');
+        const FS = require('expo-file-system/legacy');
+        if (!FS || typeof FS !== 'object') throw new Error('expo-file-system/legacy did not export an object');
+        if (typeof FS.documentDirectory !== 'string' || FS.documentDirectory.trim().length === 0) throw new Error('expo-file-system/legacy.documentDirectory is required');
+        if (typeof FS.makeDirectoryAsync !== 'function') throw new Error('expo-file-system/legacy.makeDirectoryAsync is required');
 
-        const base = String(FS.documentDirectory);
+        const base = fileUriToPathOrThrow(String(FS.documentDirectory), 'expo-file-system/legacy.documentDirectory');
         const dir = base.endsWith('/') ? `${base}guncelium/tor` : `${base}/guncelium/tor`;
-        await FS.makeDirectoryAsync(dir, { intermediates: true });
+        await FS.makeDirectoryAsync(pathToFileUriOrThrow(dir, 'tor dataDir'), { intermediates: true });
         state.dataDir = dir;
         return dir;
     }
@@ -169,6 +251,8 @@ function createTorReactNativeApiOrThrow() {
                 service: pending.service,
                 localPort: pending.localPort,
                 virtualPort: pending.virtualPort,
+                onionAddress: normalizeOnionAddress(result.onion_address),
+                onionAddresses: Array.isArray(result.onion_addresses) ? result.onion_addresses.map(normalizeOnionAddress).filter(Boolean) : null,
                 onion: stripOnionSuffix(result.onion_address || (Array.isArray(result.onion_addresses) ? result.onion_addresses[0] : null)),
                 raw: result,
             };
@@ -180,6 +264,7 @@ function createTorReactNativeApiOrThrow() {
                 mode: 'react-native',
                 service: pending.service,
                 onion: state.lastStart.onion,
+                onionAddress: state.lastStart.onionAddress,
             };
         }
 
@@ -201,6 +286,23 @@ function createTorReactNativeApiOrThrow() {
         const ok = await RnTor.shutdownService();
         if (ok !== true) throw new Error('tor shutdown failed');
         return { ok: true, running: false };
+    }
+
+    async function httpGet(opts) {
+        requireObject(opts, 'opts');
+        requireString(opts.url, 'opts.url');
+
+        const headers = (opts.headers === undefined || opts.headers === null) ? '' : String(opts.headers);
+        const timeoutMs = (opts.timeout_ms === undefined || opts.timeout_ms === null)
+            ? 30000
+            : requirePositiveNumber(opts.timeout_ms, 'opts.timeout_ms');
+
+        const RnTor = loadRnTorOrThrow();
+        if (typeof RnTor.httpGet !== 'function') throw new Error('RnTor.httpGet is required');
+
+        const result = await RnTor.httpGet({ url: String(opts.url), headers, timeout_ms: timeoutMs });
+        if (!result || typeof result !== 'object') throw new Error('RnTor.httpGet returned non-object');
+        return result;
     }
 
     async function configureHiddenService(opts) {
@@ -253,6 +355,7 @@ function createTorReactNativeApiOrThrow() {
             create: configureHiddenService,
             status: hiddenServicesStatus,
         },
+        httpGet,
     };
 }
 

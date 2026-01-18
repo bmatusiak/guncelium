@@ -7,6 +7,12 @@ function isElectronRenderer() {
     return hasDom && hasPreloadBridge;
 }
 
+function isReactNative() {
+    if (typeof navigator === 'object' && navigator && navigator.product === 'ReactNative') return true;
+    const root = (typeof globalThis !== 'undefined') ? globalThis : null;
+    return !!(root && typeof root === 'object' && root.__fbBatchedBridge);
+}
+
 function getElectronNativeServiceOrThrow(name) {
     if (typeof name !== 'string' || name.trim().length === 0) throw new Error('name must be a non-empty string');
     const root = (typeof globalThis !== 'undefined') ? globalThis : (typeof window !== 'undefined' ? window : null);
@@ -26,6 +32,13 @@ function createTorOrThrow() {
         if (typeof impl.stop !== 'function') throw new Error('ElectronNative guncelium-tor.stop must be a function');
         if (typeof impl.status !== 'function') throw new Error('ElectronNative guncelium-tor.status must be a function');
         return impl;
+    }
+
+    if (isReactNative()) {
+        // eslint-disable-next-line global-require
+        const createNative = require('./index.native');
+        if (typeof createNative !== 'function') throw new Error('index.native.js must export a function');
+        return createNative();
     }
 
     throw new Error('guncelium-tor is not implemented for this environment');

@@ -6,6 +6,7 @@
   "author": "",
   "type": "commonjs",
   "main": "index.js",
+  "react-native": "index.native.js",
   "dependencies": {
     "expo-crypto": "~15.0.8",
     "js-sha3": "^0.9.3",

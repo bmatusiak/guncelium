@@ -29,6 +29,7 @@
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
     "react-native-nitro-tor": "github:bmatusiak/react-native-nitro-tor#5e12dc01a4ddbd8ec08884294e36e2af0a27bff4",
+    "react-native-tcp-socket": "^6.3.0",
     "react-native-web": "^0.21.0",
     "test-moniker": "github:bmatusiak/test-moniker"
   },
