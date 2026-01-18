@@ -54,31 +54,30 @@ function normalizeKeysOrThrow(keys) {
 function loadRnTorOrThrow() {
     // IMPORTANT:
     // The react-native-nitro-tor "RnTor" JS wrapper spreads a NitroModule proxy into a plain object.
-    // NitroModule methods are not enumerable, so the spread drops most methods (like getServiceStatus).
-    // Use the underlying native NitroModule directly.
+    // NitroModule methods are not enumerable, so the spread drops methods (like getServiceStatus).
+    // To avoid importing a non-exported subpath (Metro warning), resolve the NitroModule via craby-modules.
     // eslint-disable-next-line global-require
-    const nativeMod = require('react-native-nitro-tor/src/NativeReactNativeNitroTor');
-    if (!nativeMod) throw new Error('react-native-nitro-tor/src/NativeReactNativeNitroTor is required');
+    const craby = require('craby-modules');
+    if (!craby || typeof craby !== 'object') throw new Error('craby-modules did not export an object');
+    if (!craby.NativeModuleRegistry || typeof craby.NativeModuleRegistry !== 'object') throw new Error('craby-modules.NativeModuleRegistry is required');
+    if (typeof craby.NativeModuleRegistry.getEnforcing !== 'function') throw new Error('NativeModuleRegistry.getEnforcing is required');
 
-    const NativeTor = (nativeMod && typeof nativeMod === 'object' && nativeMod.default)
-        ? nativeMod.default
-        : nativeMod;
-
+    const NativeTor = craby.NativeModuleRegistry.getEnforcing('ReactNativeNitroTor');
     if (!NativeTor || typeof NativeTor !== 'object') throw new Error('NativeTor must be an object');
     if (typeof NativeTor.startTorIfNotRunning !== 'function') throw new Error('NativeTor.startTorIfNotRunning is required');
     if (typeof NativeTor.getServiceStatus !== 'function') throw new Error('NativeTor.getServiceStatus is required');
     if (typeof NativeTor.shutdownService !== 'function') throw new Error('NativeTor.shutdownService is required');
 
     return {
-        initTorService: NativeTor.initTorService ? NativeTor.initTorService.bind(NativeTor) : undefined,
-        createHiddenService: NativeTor.createHiddenService ? NativeTor.createHiddenService.bind(NativeTor) : undefined,
-        deleteHiddenService: NativeTor.deleteHiddenService ? NativeTor.deleteHiddenService.bind(NativeTor) : undefined,
+        initTorService: (typeof NativeTor.initTorService === 'function') ? NativeTor.initTorService.bind(NativeTor) : undefined,
+        createHiddenService: (typeof NativeTor.createHiddenService === 'function') ? NativeTor.createHiddenService.bind(NativeTor) : undefined,
+        deleteHiddenService: (typeof NativeTor.deleteHiddenService === 'function') ? NativeTor.deleteHiddenService.bind(NativeTor) : undefined,
         getServiceStatus: NativeTor.getServiceStatus.bind(NativeTor),
         shutdownService: NativeTor.shutdownService.bind(NativeTor),
-        httpGet: NativeTor.httpGet ? NativeTor.httpGet.bind(NativeTor) : undefined,
-        httpPost: NativeTor.httpPost ? NativeTor.httpPost.bind(NativeTor) : undefined,
-        httpPut: NativeTor.httpPut ? NativeTor.httpPut.bind(NativeTor) : undefined,
-        httpDelete: NativeTor.httpDelete ? NativeTor.httpDelete.bind(NativeTor) : undefined,
+        httpGet: (typeof NativeTor.httpGet === 'function') ? NativeTor.httpGet.bind(NativeTor) : undefined,
+        httpPost: (typeof NativeTor.httpPost === 'function') ? NativeTor.httpPost.bind(NativeTor) : undefined,
+        httpPut: (typeof NativeTor.httpPut === 'function') ? NativeTor.httpPut.bind(NativeTor) : undefined,
+        httpDelete: (typeof NativeTor.httpDelete === 'function') ? NativeTor.httpDelete.bind(NativeTor) : undefined,
         async startTorIfNotRunning(params) {
             if (!params || typeof params !== 'object') throw new Error('startTorIfNotRunning params must be an object');
             const { keys, ...rest } = params;
@@ -174,7 +173,7 @@ function isRunningFromStatusCode(code) {
 function createTorReactNativeApiOrThrow() {
     const state = {
         dataDir: null,
-        socksPort: 9050,
+        socksPort: 8765,
         timeoutMs: 60000,
         pendingHs: null,
         lastStart: null,

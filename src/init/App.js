@@ -70,7 +70,7 @@ export default function App() {
   }
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 16 }}>
+    <ScrollView contentContainerStyle={{ padding: 16, backgroundColor: '#fff' }}>
       <Text style={{ fontSize: 22, fontWeight: '700', marginBottom: 6 }}>guncelium</Text>
       <Text style={{ color: '#555', marginBottom: 12 }}>env: {envLabel}</Text>
 
