@@ -6,12 +6,10 @@ import app from '../runtime/rectifyApp';
 import { GunPanel, MonikerPanel, TorPanel } from './panels';
 
 function isElectronRenderer() {
-  return (
-    typeof process === 'object' &&
-    !!(process.versions && process.versions.electron) &&
-    typeof window === 'object' &&
-    typeof window.document !== 'undefined'
-  );
+  const root = (typeof globalThis !== 'undefined') ? globalThis : (typeof window !== 'undefined' ? window : null);
+  const hasDom = (typeof window === 'object' && typeof window.document !== 'undefined');
+  const hasBridge = !!(root && typeof root === 'object' && root.ElectronNative && typeof root.ElectronNative === 'object');
+  return hasDom && hasBridge;
 }
 
 export default function App() {
@@ -52,6 +50,7 @@ export default function App() {
   }, []);
 
   const gun = services ? services.gun : null;
+  const gunClient = services ? services.gunClient : null;
   const moniker = services ? services.moniker : null;
   const tor = services ? services.tor : null;
 
@@ -76,7 +75,7 @@ export default function App() {
       <Text style={{ color: '#555', marginBottom: 12 }}>env: {envLabel}</Text>
 
       <TorPanel tor={tor} gunTcpPort={gunTcpStatus && gunTcpStatus.running ? gunTcpStatus.port : null} />
-      <GunPanel gun={gun} onStatus={setGunStatus} onTcpStatus={setGunTcpStatus} />
+      <GunPanel gun={gun} gunClient={gunClient} onStatus={setGunStatus} onTcpStatus={setGunTcpStatus} />
       <MonikerPanel moniker={moniker} />
 
       <StatusBar style="auto" />

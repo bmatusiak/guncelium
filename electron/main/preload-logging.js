@@ -8,6 +8,9 @@
 // eslint-disable-next-line global-require
 require('./preload.js');
 
+// eslint-disable-next-line global-require
+require('./preload-hardening.js');
+
 const ENABLE_RENDERER_DIAGNOSTICS = (process.env.NODE_ENV !== 'production');
 
 if (ENABLE_RENDERER_DIAGNOSTICS) {

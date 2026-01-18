@@ -11,12 +11,12 @@ function getDefaultCsp({ isDev }) {
         // Script inline is disabled by default; if your exported HTML needs it,
         // set EXPO_ELECTRON_CSP to override.
         "script-src 'self'",
-        "connect-src 'self' https: wss:",
+        "connect-src 'self' http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:* https: wss:",
     ].join('; ');
 
     const DEFAULT_CSP_DEV = [
         // Dev server + HMR need localhost + websockets and often eval.
-        "default-src 'self' http://localhost:* ws://localhost:*",
+        "default-src 'self' http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:*",
         "base-uri 'self'",
         "object-src 'none'",
         "frame-ancestors 'none'",
@@ -24,7 +24,7 @@ function getDefaultCsp({ isDev }) {
         "font-src 'self' data:",
         "style-src 'self' 'unsafe-inline'",
         "script-src 'self' 'unsafe-eval' 'unsafe-inline' http://localhost:*",
-        "connect-src 'self' http://localhost:* ws://localhost:* https: wss:",
+        "connect-src 'self' http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:* https: wss:",
     ].join('; ');
 
     return isDev ? DEFAULT_CSP_DEV : DEFAULT_CSP_PROD;

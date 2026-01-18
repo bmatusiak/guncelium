@@ -57,6 +57,11 @@ function createGunReactNativeApiOrThrow() {
         peers: [],
     };
 
+    function get() {
+        if (!state.gun) throw new Error('gun not running');
+        return state.gun;
+    }
+
     async function start(opts) {
         if (state.gun) throw new Error('gun already running');
         const o = (opts && typeof opts === 'object') ? opts : {};
@@ -107,7 +112,7 @@ function createGunReactNativeApiOrThrow() {
         };
     }
 
-    return { start, stop, status };
+    return { start, stop, status, get };
 }
 
 module.exports = createGunReactNativeApiOrThrow;

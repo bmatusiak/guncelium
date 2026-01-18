@@ -1,25 +1,39 @@
 const path = require('path');
 const fs = require('fs');
 
+function requireObject(value, name) {
+    if (!value || typeof value !== 'object') throw new Error(`${name} must be an object`);
+}
+
+function requireFunction(value, name) {
+    if (typeof value !== 'function') throw new Error(`${name} must be a function`);
+}
+
+function requireString(value, name) {
+    if (typeof value !== 'string' || value.trim().length === 0) throw new Error(`${name} must be a non-empty string`);
+}
+
 function _isFilePathString(p) {
     return typeof p === 'string' && p.length > 0;
 }
 
 function _fileExists(p) {
-    try { return !!(p && fs.existsSync(p)); } catch (e) { return false; }
+    if (!_isFilePathString(p)) return false;
+    return !!fs.existsSync(p);
 }
 
 function _sanitizeOpenExternalUrl(url) {
-    if (typeof url !== 'string') return null;
+    if (typeof url !== 'string') throw new Error('url must be a string');
     const trimmed = url.trim();
-    if (!trimmed) return null;
+    if (!trimmed) throw new Error('url must be a non-empty string');
     // Only allow a small set of schemes to reduce abuse.
     if (/^(https?:\/\/|mailto:)/i.test(trimmed)) return trimmed;
-    return null;
+    throw new Error('url scheme not allowed');
 }
 
 function _sanitizeSaveDialogOptions(options) {
-    if (!options || typeof options !== 'object') return {};
+    if (options === undefined || options === null) return {};
+    if (!options || typeof options !== 'object') throw new Error('options must be an object');
     /** @type {any} */
     const out = {};
 
@@ -41,6 +55,12 @@ function _sanitizeSaveDialogOptions(options) {
     return out;
 }
 
+function requireMainWindowOrThrow(win) {
+    if (!win || typeof win !== 'object') throw new Error('mainWindow must be set');
+    requireObject(win.webContents, 'mainWindow.webContents');
+    return win;
+}
+
 function createDesktopBridge({ app, ipcMain, nativeTheme, clipboard, dialog, shell, powerMonitor }) {
     let mainWindow = null;
 
@@ -49,139 +69,136 @@ function createDesktopBridge({ app, ipcMain, nativeTheme, clipboard, dialog, she
     }
 
     function _send(channel, payload) {
-        if (!mainWindow || !mainWindow.webContents) return;
-        try { mainWindow.webContents.send(channel, payload); } catch (e) { }
+        requireString(channel, 'channel');
+        requireMainWindowOrThrow(mainWindow);
+        requireFunction(mainWindow.webContents.send, 'mainWindow.webContents.send');
+        mainWindow.webContents.send(channel, payload);
     }
 
     function startEventForwarding() {
-        try {
-            if (nativeTheme && typeof nativeTheme.on === 'function') {
-                nativeTheme.on('updated', () => {
-                    _send('electron-native-theme-updated', {
-                        shouldUseDarkColors: !!nativeTheme.shouldUseDarkColors,
-                        themeSource: nativeTheme.themeSource,
-                    });
-                });
-            }
-        } catch (e) { }
+        requireObject(nativeTheme, 'nativeTheme');
+        requireFunction(nativeTheme.on, 'nativeTheme.on');
 
-        try {
-            if (powerMonitor && typeof powerMonitor.on === 'function') {
-                const forward = (type) => {
-                    powerMonitor.on(type, () => _send('electron-power-event', { type }));
-                };
-                // Common powerMonitor events (varies by platform)
-                ['suspend', 'resume', 'on-ac', 'on-battery', 'shutdown', 'lock-screen', 'unlock-screen'].forEach(forward);
-            }
-        } catch (e) { }
+        nativeTheme.on('updated', () => {
+            _send('electron-native-theme-updated', {
+                shouldUseDarkColors: !!nativeTheme.shouldUseDarkColors,
+                themeSource: nativeTheme.themeSource,
+            });
+        });
+
+        requireObject(powerMonitor, 'powerMonitor');
+        requireFunction(powerMonitor.on, 'powerMonitor.on');
+
+        const forward = (type) => {
+            requireString(type, 'powerMonitor event type');
+            powerMonitor.on(type, () => _send('electron-power-event', { type }));
+        };
+
+        // Common powerMonitor events (varies by platform)
+        const events = ['suspend', 'resume', 'on-ac', 'on-battery', 'shutdown', 'lock-screen', 'unlock-screen'];
+        for (let i = 0; i < events.length; i++) {
+            forward(events[i]);
+        }
     }
 
     function registerIpcHandlers() {
+        requireObject(ipcMain, 'ipcMain');
+        requireFunction(ipcMain.handle, 'ipcMain.handle');
+        requireObject(app, 'app');
+        requireFunction(app.getPath, 'app.getPath');
+        requireObject(dialog, 'dialog');
+        requireFunction(dialog.showOpenDialog, 'dialog.showOpenDialog');
+        requireFunction(dialog.showSaveDialog, 'dialog.showSaveDialog');
+        requireObject(clipboard, 'clipboard');
+        requireFunction(clipboard.readText, 'clipboard.readText');
+        requireFunction(clipboard.writeText, 'clipboard.writeText');
+        requireObject(shell, 'shell');
+        requireFunction(shell.openExternal, 'shell.openExternal');
+        requireFunction(shell.showItemInFolder, 'shell.showItemInFolder');
+
         // Dialogs
         ipcMain.handle('dialog:open', async (event, options) => {
-            try {
-                const res = await dialog.showOpenDialog(mainWindow || null, options || {});
-                return res;
-            } catch (e) {
-                return { canceled: true, filePaths: [], error: e && e.message };
-            }
+            void event;
+            requireMainWindowOrThrow(mainWindow);
+            const res = await dialog.showOpenDialog(mainWindow, options || {});
+            requireObject(res, 'showOpenDialog result');
+            return res;
         });
 
         ipcMain.handle('dialog:save', async (event, options) => {
-            try {
-                const safeOptions = _sanitizeSaveDialogOptions(options);
-                const res = mainWindow
-                    ? await dialog.showSaveDialog(mainWindow, safeOptions)
-                    : await dialog.showSaveDialog(safeOptions);
-                return res;
-            } catch (e) {
-                return { canceled: true, filePath: undefined, error: e && e.message };
-            }
+            void event;
+            requireMainWindowOrThrow(mainWindow);
+            const safeOptions = _sanitizeSaveDialogOptions(options);
+            const res = await dialog.showSaveDialog(mainWindow, safeOptions);
+            requireObject(res, 'showSaveDialog result');
+            return res;
         });
 
         // Clipboard
         ipcMain.handle('clipboard:readText', async () => {
-            try { return clipboard.readText(); } catch (e) { return ''; }
+            const v = clipboard.readText();
+            if (typeof v !== 'string') throw new Error('clipboard.readText must return a string');
+            return v;
         });
 
         ipcMain.handle('clipboard:writeText', async (event, text) => {
-            try {
-                clipboard.writeText(String(text ?? ''));
-                return true;
-            } catch (e) {
-                return false;
-            }
+            void event;
+            clipboard.writeText(String(text ?? ''));
+            return true;
         });
 
         // Theme
         ipcMain.handle('nativeTheme:get', async () => {
-            try {
-                return {
-                    shouldUseDarkColors: !!nativeTheme.shouldUseDarkColors,
-                    themeSource: nativeTheme.themeSource,
-                };
-            } catch (e) {
-                return { shouldUseDarkColors: false, themeSource: 'system' };
-            }
+            requireObject(nativeTheme, 'nativeTheme');
+            return {
+                shouldUseDarkColors: !!nativeTheme.shouldUseDarkColors,
+                themeSource: nativeTheme.themeSource,
+            };
         });
 
         ipcMain.handle('nativeTheme:setThemeSource', async (event, themeSource) => {
-            try {
-                const v = String(themeSource || 'system');
-                if (!['system', 'light', 'dark'].includes(v)) return false;
-                nativeTheme.themeSource = v;
-                return true;
-            } catch (e) {
-                return false;
-            }
+            void event;
+            requireObject(nativeTheme, 'nativeTheme');
+            const v = String(themeSource || 'system');
+            if (!['system', 'light', 'dark'].includes(v)) throw new Error('themeSource must be one of system|light|dark');
+            nativeTheme.themeSource = v;
+            return true;
         });
 
         // Shell helpers
         ipcMain.handle('shell:openExternal', async (event, url) => {
-            try {
-                const safe = _sanitizeOpenExternalUrl(url);
-                if (!safe) return false;
-                await shell.openExternal(safe);
-                return true;
-            } catch (e) {
-                return false;
-            }
+            void event;
+            const safe = _sanitizeOpenExternalUrl(url);
+            await shell.openExternal(safe);
+            return true;
         });
 
         ipcMain.handle('shell:showItemInFolder', async (event, filePath) => {
-            try {
-                if (!_isFilePathString(filePath)) return false;
-                const resolved = path.resolve(String(filePath));
-                if (!_fileExists(resolved)) return false;
-                shell.showItemInFolder(resolved);
-                return true;
-            } catch (e) {
-                return false;
-            }
+            void event;
+            if (!_isFilePathString(filePath)) throw new Error('filePath must be a non-empty string');
+            const resolved = path.resolve(String(filePath));
+            if (!_fileExists(resolved)) throw new Error('filePath does not exist');
+            shell.showItemInFolder(resolved);
+            return true;
         });
 
         // App paths (useful for logs/data dirs)
         ipcMain.handle('app:getPath', async (event, name) => {
-            try {
-                const n = String(name || 'userData');
-                // Allow a conservative subset; expand as needed.
-                const allowed = ['userData', 'documents', 'downloads', 'desktop', 'music', 'pictures', 'videos', 'logs', 'temp'];
-                if (!allowed.includes(n)) return null;
-                return app.getPath(n);
-            } catch (e) {
-                return null;
-            }
+            void event;
+            const n = String(name || 'userData');
+            // Allow a conservative subset; expand as needed.
+            const allowed = ['userData', 'documents', 'downloads', 'desktop', 'music', 'pictures', 'videos', 'logs', 'temp'];
+            if (!allowed.includes(n)) throw new Error('app.getPath name not allowed');
+            const p = app.getPath(n);
+            requireString(p, 'app.getPath result');
+            return p;
         });
 
         // Relaunch (useful for quick dev refresh flows)
         ipcMain.handle('app:relaunch', async () => {
-            try {
-                app.relaunch();
-                app.exit(0);
-                return true;
-            } catch (e) {
-                return false;
-            }
+            app.relaunch();
+            app.exit(0);
+            return true;
         });
     }
 

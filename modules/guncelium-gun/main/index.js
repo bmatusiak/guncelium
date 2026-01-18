@@ -75,7 +75,31 @@ function createGunMainControllerOrThrow({ electronApp }) {
         port: null,
         gun: null,
         storeDir: null,
+        sockets: new Set(),
     };
+
+    function withTimeoutOrThrow(promise, timeoutMs, label) {
+        const ms = Number(timeoutMs);
+        if (!Number.isFinite(ms) || ms < 1 || ms > 10000) throw new Error('timeoutMs must be 1..10000');
+        requireString(label, 'label');
+        return Promise.race([
+            promise,
+            new Promise((_, reject) => setTimeout(() => reject(new Error(`timeout: ${label}`)), ms)),
+        ]);
+    }
+
+    function destroyOpenSocketsOrThrow() {
+        const sockets = state.sockets;
+        if (!sockets || typeof sockets !== 'object') throw new Error('state.sockets missing');
+        const list = Array.from(sockets);
+        const MAX = 2048;
+        if (list.length > MAX) throw new Error('too many open sockets');
+        for (let i = 0; i < list.length; i++) {
+            const s = list[i];
+            if (!s) continue;
+            if (typeof s.destroy === 'function') s.destroy();
+        }
+    }
 
     async function listenOrThrow(server, port) {
         requireObject(server, 'server');
@@ -99,12 +123,13 @@ function createGunMainControllerOrThrow({ electronApp }) {
 
     async function closeOrThrow(server) {
         requireObject(server, 'server');
-        await new Promise((resolve, reject) => {
+        destroyOpenSocketsOrThrow();
+        await withTimeoutOrThrow(new Promise((resolve, reject) => {
             server.close((err) => {
                 if (err) reject(err);
                 else resolve();
             });
-        });
+        }), 2000, 'http server close');
     }
 
     async function start(opts) {
@@ -117,15 +142,22 @@ function createGunMainControllerOrThrow({ electronApp }) {
         const peers = Array.isArray(o.peers) ? o.peers : [];
 
         const server = http.createServer((req, res) => res.end('gun'));
+        state.sockets = new Set();
+        server.on('connection', (socket) => {
+            state.sockets.add(socket);
+            socket.on('close', () => {
+                state.sockets.delete(socket);
+            });
+        });
         await listenOrThrow(server, desiredPort);
         const addr = server.address();
         if (!addr || typeof addr !== 'object' || !addr.port) throw new Error('gun server missing bound port');
 
         const port = addr.port;
         const gun = Gun({ web: server, peers, file: storeDir });
-        if (!gun || typeof gun !== 'function') {
-            throw new Error('gun initialization failed');
-        }
+        const gunType = typeof gun;
+        if (!gun || (gunType !== 'function' && gunType !== 'object')) throw new Error('gun initialization failed');
+        if (typeof gun.get !== 'function') throw new Error('gun initialization failed (missing get)');
 
         state.server = server;
         state.port = port;
@@ -143,6 +175,7 @@ function createGunMainControllerOrThrow({ electronApp }) {
         state.port = null;
         state.gun = null;
         state.storeDir = null;
+        state.sockets = new Set();
         return { ok: true, running: false };
     }
 

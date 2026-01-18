@@ -25,11 +25,28 @@ function normalizeGunTcpStatus(st) {
     };
 }
 
-export default function GunPanel({ gun, onStatus, onTcpStatus }) {
+function isElectronRenderer() {
+    const root = (typeof globalThis !== 'undefined') ? globalThis : (typeof window !== 'undefined' ? window : null);
+    return !!(root && typeof root === 'object' && root.ElectronNative && typeof root.ElectronNative === 'object');
+}
+
+function normalizeGunClientStatus(st) {
+    if (!st || typeof st !== 'object') return { ok: false, connected: false, peerUrl: null, connectedAt: null };
+    return {
+        ok: st.ok === true,
+        connected: st.connected === true,
+        peerUrl: st.peerUrl || null,
+        connectedAt: (typeof st.connectedAt === 'number') ? st.connectedAt : null,
+        raw: st,
+    };
+}
+
+export default function GunPanel({ gun, gunClient, onStatus, onTcpStatus }) {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
     const [status, setStatus] = useState(null);
     const [tcpStatus, setTcpStatus] = useState(null);
+    const [clientStatus, setClientStatus] = useState(null);
 
     const canUse = useMemo(() => {
         try {
@@ -59,6 +76,11 @@ export default function GunPanel({ gun, onStatus, onTcpStatus }) {
         }
     }, [onTcpStatus]);
 
+    const publishClientStatus = useCallback((st) => {
+        const norm = normalizeGunClientStatus(st);
+        setClientStatus(norm);
+    }, []);
+
     const refresh = useCallback(async () => {
         setBusy(true);
         setError(null);
@@ -70,6 +92,13 @@ export default function GunPanel({ gun, onStatus, onTcpStatus }) {
             // eslint-disable-next-line no-console
             console.log(`[ui][gun] status result ${jsonForLogOrThrow(st)}`);
             publishStatus(st);
+
+            if (isElectronRenderer() && gunClient && typeof gunClient.status === 'function') {
+                const cs = await gunClient.status();
+                // eslint-disable-next-line no-console
+                console.log(`[ui][gun-client] status result ${jsonForLogOrThrow(cs)}`);
+                publishClientStatus(cs);
+            }
 
             if (gun.tcpStatus && typeof gun.tcpStatus === 'function') {
                 const tcpSt = await gun.tcpStatus();
@@ -84,7 +113,7 @@ export default function GunPanel({ gun, onStatus, onTcpStatus }) {
         } finally {
             setBusy(false);
         }
-    }, [canUse.ok, canUse.reason, gun, publishStatus, publishTcpStatus]);
+    }, [canUse.ok, canUse.reason, gun, gunClient, publishClientStatus, publishStatus, publishTcpStatus]);
 
     const start = useCallback(async () => {
         setBusy(true);
@@ -98,6 +127,14 @@ export default function GunPanel({ gun, onStatus, onTcpStatus }) {
             // eslint-disable-next-line no-console
             console.log(`[ui][gun] status after start ${jsonForLogOrThrow(st)}`);
             publishStatus(st);
+
+            if (isElectronRenderer() && gunClient && typeof gunClient.connect === 'function' && typeof gunClient.status === 'function') {
+                // eslint-disable-next-line no-console
+                console.log('[ui][gun-client] connect after gun start');
+                await gunClient.connect();
+                const cs = await gunClient.status();
+                publishClientStatus(cs);
+            }
         } catch (e) {
             // eslint-disable-next-line no-console
             console.error(`[ui][gun] start error ${toErrorMessage(e)}`);
@@ -105,7 +142,7 @@ export default function GunPanel({ gun, onStatus, onTcpStatus }) {
         } finally {
             setBusy(false);
         }
-    }, [canUse.ok, canUse.reason, gun, publishStatus]);
+    }, [canUse.ok, canUse.reason, gun, gunClient, publishClientStatus, publishStatus]);
 
     const stop = useCallback(async () => {
         setBusy(true);
@@ -119,6 +156,14 @@ export default function GunPanel({ gun, onStatus, onTcpStatus }) {
             // eslint-disable-next-line no-console
             console.log(`[ui][gun] status after stop ${jsonForLogOrThrow(st)}`);
             publishStatus(st);
+
+            if (isElectronRenderer() && gunClient && typeof gunClient.disconnect === 'function' && typeof gunClient.status === 'function') {
+                // eslint-disable-next-line no-console
+                console.log('[ui][gun-client] disconnect after gun stop');
+                await gunClient.disconnect();
+                const cs = await gunClient.status();
+                publishClientStatus(cs);
+            }
         } catch (e) {
             // eslint-disable-next-line no-console
             console.error(`[ui][gun] stop error ${toErrorMessage(e)}`);
@@ -126,7 +171,7 @@ export default function GunPanel({ gun, onStatus, onTcpStatus }) {
         } finally {
             setBusy(false);
         }
-    }, [canUse.ok, canUse.reason, gun, publishStatus]);
+    }, [canUse.ok, canUse.reason, gun, gunClient, publishClientStatus, publishStatus]);
 
     const tcpStart = useCallback(async () => {
         setBusy(true);
@@ -196,6 +241,7 @@ export default function GunPanel({ gun, onStatus, onTcpStatus }) {
 
             <Text style={{ fontFamily: 'monospace', fontSize: 12 }}>{safeJson(status)}</Text>
             {tcpStatus ? <Text style={{ fontFamily: 'monospace', fontSize: 12, marginTop: 6 }}>{safeJson(tcpStatus)}</Text> : null}
+            {clientStatus ? <Text style={{ fontFamily: 'monospace', fontSize: 12, marginTop: 6 }}>{safeJson(clientStatus)}</Text> : null}
         </View>
     );
 }

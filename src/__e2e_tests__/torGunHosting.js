@@ -1,4 +1,6 @@
 import app from '../runtime/rectifyApp';
+import Gun from 'gun/gun';
+import 'gun/sea';
 
 function requireObject(value, name) {
     if (!value || typeof value !== 'object') throw new Error(`${name} must be an object`);
@@ -12,6 +14,139 @@ function sleepMsOrThrow(ms) {
     const n = Number(ms);
     if (!Number.isFinite(n) || n < 0) throw new Error('sleepMsOrThrow: ms must be a non-negative number');
     return new Promise((resolve) => setTimeout(resolve, n));
+}
+
+function requireString(value, name) {
+    if (typeof value !== 'string' || value.trim().length === 0) throw new Error(`${name} must be a non-empty string`);
+}
+
+function nowMs() {
+    return Date.now();
+}
+
+function randomSuffixOrThrow() {
+    const root = (typeof globalThis !== 'undefined') ? globalThis : (typeof window !== 'undefined' ? window : null);
+    requireObject(root, 'globalThis');
+    const crypto = root.crypto;
+    requireObject(crypto, 'crypto');
+    requireFunction(crypto.getRandomValues, 'crypto.getRandomValues');
+    const buf = new Uint8Array(8);
+    crypto.getRandomValues(buf);
+    let out = '';
+    for (let i = 0; i < buf.length; i++) {
+        out += buf[i].toString(16).padStart(2, '0');
+    }
+    return out;
+}
+
+function withTimeoutOrThrow(promise, timeoutMs, label) {
+    const ms = Number(timeoutMs);
+    if (!Number.isFinite(ms) || ms < 1 || ms > 10000) throw new Error('timeoutMs must be 1..10000');
+    requireString(label, 'label');
+
+    return Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error(`timeout: ${label}`)), ms)),
+    ]);
+}
+
+async function gunOnceOrThrow(node, timeoutMs) {
+    requireObject(node, 'gun node');
+    requireFunction(node.once, 'gun node.once');
+    return withTimeoutOrThrow(new Promise((resolve) => {
+        node.once((data) => resolve(data));
+    }), timeoutMs, 'gun.once');
+}
+
+function safeGunOffOrThrow(gun) {
+    const t = typeof gun;
+    if (!gun || (t !== 'function' && t !== 'object')) throw new Error('gun instance must be an object or function');
+    requireFunction(gun.off, 'gun.off');
+    gun.off();
+}
+
+async function getElectronTempDirOrThrow() {
+    if (typeof window !== 'object' || !window) throw new Error('window is required');
+    const electron = window.electron;
+    requireObject(electron, 'window.electron');
+    requireFunction(electron.getPath, 'window.electron.getPath');
+    const p = await electron.getPath('temp');
+    requireString(p, 'electron.getPath(temp)');
+    return p;
+}
+
+function joinPathOrThrow(base, leaf) {
+    requireString(base, 'base');
+    requireString(leaf, 'leaf');
+    const sep = base.endsWith('/') ? '' : '/';
+    return `${base}${sep}${leaf}`;
+}
+
+async function assertRendererGunSyncOrThrow(assert, log, gunService) {
+    requireObject(assert, 'assert');
+    requireFunction(assert.ok, 'assert.ok');
+    if (typeof log !== 'function') throw new Error('log must be a function');
+    requireObject(gunService, 'gun service');
+    requireFunction(gunService.start, 'gun.start');
+    requireFunction(gunService.stop, 'gun.stop');
+    requireFunction(gunService.status, 'gun.status');
+
+    const tempDir = await getElectronTempDirOrThrow();
+    const suffix = `${nowMs()}-${randomSuffixOrThrow()}`;
+    const httpStoreDir = joinPathOrThrow(tempDir, `guncelium-e2e-gun-http-${suffix}`);
+
+    log('starting gun http/ws...');
+    const started = await gunService.start({ port: 0, peers: [], storeDir: httpStoreDir });
+    requireObject(started, 'gun.start result');
+    assert.ok(started.ok === true && started.running === true, 'gun http must be running');
+
+    let a = null;
+    let b = null;
+
+    try {
+        const st = await gunService.status();
+        requireObject(st, 'gun.status result');
+        const port = Number(st.port);
+        assert.ok(Number.isInteger(port) && port > 0 && port <= 65535, 'gun.status.port must be a valid port');
+        const peerUrl = `http://localhost:${port}/gun`;
+
+        log('connecting two renderer gun clients...');
+        a = Gun({ peers: [peerUrl], localStorage: false });
+        b = Gun({ peers: [peerUrl], localStorage: false });
+        const aType = typeof a;
+        const bType = typeof b;
+        if (!a || (aType !== 'function' && aType !== 'object') || typeof a.get !== 'function') throw new Error('Gun client A init failed');
+        if (!b || (bType !== 'function' && bType !== 'object') || typeof b.get !== 'function') throw new Error('Gun client B init failed');
+
+        const key = `__e2e_sync__/${nowMs()}-${randomSuffixOrThrow()}`;
+        const expected = { v: `ok-${randomSuffixOrThrow()}`, ts: nowMs() };
+
+        log('writing via client A...');
+        a.get(key).put(expected);
+
+        log('waiting for client B to observe value...');
+        const observed = await waitForOrThrow(
+            async () => {
+                const data = await gunOnceOrThrow(b.get(key), 1000);
+                if (!data || typeof data !== 'object') return null;
+                if (data.v !== expected.v) return null;
+                return data;
+            },
+            'gun client sync',
+            40,
+            150,
+        );
+
+        assert.ok(!!observed, 'client B must observe the value');
+    } finally {
+        if (a) safeGunOffOrThrow(a);
+        if (b) safeGunOffOrThrow(b);
+
+        log('stopping gun http/ws...');
+        const stopped = await gunService.stop();
+        requireObject(stopped, 'gun.stop result');
+        assert.ok(stopped.ok === true && stopped.running === false, 'gun http stop ok');
+    }
 }
 
 async function waitForOrThrow(getter, label, maxAttempts, delayMs) {
@@ -130,8 +265,13 @@ export default {
                 let torStarted = false;
 
                 try {
+                    log('verifying renderer can sync to main-hosted gun...');
+                    await assertRendererGunSyncOrThrow(assert, log, gun);
+
                     log('starting gun tcp...');
-                    gunStarted = await gun.tcpStart({ host: '127.0.0.1', port: 0, peers: [] });
+                    const tempDir = await getElectronTempDirOrThrow();
+                    const tcpStoreDir = joinPathOrThrow(tempDir, `guncelium-e2e-gun-tcp-${nowMs()}-${randomSuffixOrThrow()}`);
+                    gunStarted = await gun.tcpStart({ host: '127.0.0.1', port: 0, peers: [], storeDir: tcpStoreDir });
                     requireObject(gunStarted, 'gun.tcpStart result');
                     assert.ok(gunStarted.ok === true && gunStarted.running === true, 'gun tcp must be running');
                     assert.ok(!!gunStarted.port, 'gun tcp must have a port');

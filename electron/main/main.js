@@ -10,6 +10,9 @@ let mainWindow;
 const DEV_URL = process.env.EXPO_WEB_URL || 'http://localhost:8081';
 const PROD_INDEX = path.join(__dirname, '..', 'app', 'index.html');
 const ENABLE_RENDERER_DIAGNOSTICS = (!app.isPackaged) && (process.env.NODE_ENV !== 'production');
+// Default ON in dev to support automated test runs.
+// Opt out with: GUNCELIUM_AUTO_EXIT_ON_TEST_COMPLETE=0
+const AUTO_EXIT_ON_TEST_COMPLETE = (!app.isPackaged) && (process.env.GUNCELIUM_AUTO_EXIT_ON_TEST_COMPLETE !== '0');
 
 const deepLinks = createDeepLinkBridge({ app });
 const desktop = createDesktopBridge({ app, ipcMain, nativeTheme, clipboard, dialog, shell, powerMonitor });
@@ -25,6 +28,8 @@ function requireObject(value, name) {
 }
 
 function installRendererLogForwardingOrThrow() {
+    void AUTO_EXIT_ON_TEST_COMPLETE;
+
     ipcMain.on('renderer:console', (event, payload) => {
         void event;
         requireObject(payload, 'payload');
@@ -83,14 +88,16 @@ function attachRendererDiagnosticsOrThrow(win) {
         return 'log';
     };
 
-    win.webContents.on('console-message', (event, level, message, line, sourceId) => {
-        void event;
-        const lvl = levelName(level);
-        const src = sourceId ? String(sourceId) : 'unknown';
-        const ln = Number.isFinite(Number(line)) ? Number(line) : 0;
+    // New signature: listener receives Event<WebContentsConsoleMessageEventParams>.
+    win.webContents.on('console-message', (event) => {
+        requireObject(event, 'console-message event');
+        if (typeof event.message !== 'string') throw new Error('console-message event.message missing');
+        const lvl = levelName(event.level);
+        const src = event.sourceId ? String(event.sourceId) : 'unknown';
+        const ln = Number.isFinite(Number(event.lineNumber)) ? Number(event.lineNumber) : 0;
         // Print in a grep-friendly format.
         // eslint-disable-next-line no-console
-        console[lvl](`[renderer:${lvl}] ${src}:${ln} ${String(message)}`);
+        console[lvl](`[renderer:${lvl}] ${src}:${ln} ${String(event.message)}`);
     });
 
     win.webContents.on('render-process-gone', (event, details) => {
@@ -112,12 +119,48 @@ function attachRendererDiagnosticsOrThrow(win) {
     });
 }
 
+function attachAutoExitOnTestCompleteOrThrow(win) {
+    if (!AUTO_EXIT_ON_TEST_COMPLETE) return;
+    requireObject(win, 'win');
+    requireObject(win.webContents, 'win.webContents');
+    requireFunction(win.webContents.on, 'win.webContents.on');
+
+    let didAutoExit = false;
+
+    function maybeExitFromMessageOrThrow(msg) {
+        if (didAutoExit) return;
+        requireString(msg, 'console message');
+
+        // Example: "[Moniker] TEST COMPLETE | Passed: 2 Failed: 0 (1.81s)"
+        const m = msg.match(/TEST COMPLETE \| Passed: (\d+) Failed: (\d+) \(([^)]+)\)/);
+        if (!m) return;
+
+        const passed = Number(m[1]);
+        const failed = Number(m[2]);
+        if (!Number.isInteger(passed) || passed < 0) throw new Error('invalid passed count');
+        if (!Number.isInteger(failed) || failed < 0) throw new Error('invalid failed count');
+
+        const exitCode = failed === 0 ? 0 : 1;
+        didAutoExit = true;
+        // eslint-disable-next-line no-console
+        console.log(`[main] auto-exit on test complete: passed=${passed} failed=${failed} exitCode=${exitCode}`);
+        setTimeout(() => app.exit(exitCode), 50);
+    }
+
+    // New signature: listener receives Event<WebContentsConsoleMessageEventParams>.
+    win.webContents.on('console-message', (event) => {
+        requireObject(event, 'console-message event');
+        if (typeof event.message !== 'string') throw new Error('console-message event.message missing');
+        maybeExitFromMessageOrThrow(event.message);
+    });
+}
+
 function createWindow() {
     const preloadPath = process.env.EXPO_PRELOAD_PATH
         ? path.resolve(process.env.EXPO_PRELOAD_PATH)
         : (ENABLE_RENDERER_DIAGNOSTICS
             ? path.join(__dirname, 'preload-logging.js')
-            : path.join(__dirname, 'preload.js'));
+            : path.join(__dirname, 'preload-hardened.js'));
     mainWindow = new BrowserWindow({
         width: 480,
         height: 960,
@@ -129,6 +172,8 @@ function createWindow() {
             sandbox: false
         },
     });
+
+    attachAutoExitOnTestCompleteOrThrow(mainWindow);
 
     if (ENABLE_RENDERER_DIAGNOSTICS) {
         attachRendererDiagnosticsOrThrow(mainWindow);

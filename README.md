@@ -55,9 +55,11 @@ The core objective is that every environment participates in the *same* network,
 		- Displays status and control panels.
 		- Runs a browser-style Gun client that connects to the HTTP/WS endpoint hosted by **main**.
 		- This keeps desktop behavior consistent with the Node.js “background node” model: main provides services; renderer consumes them like a browser would.
+		- **Gun instance model (important):** renderer uses a *separate* Gun client instance (it does not share the main-process Gun instance). This separation is intentional: main hosts services; renderer behaves like a browser peer.
 
 - **React Native (mobile)**
 	- Role: a mobile peer that should be able to host and join the mesh with minimal infrastructure.
+	- **Gun instance model (important):** on React Native, the app uses a *single* Gun instance. The same Gun instance that the UI reads/writes is the one that participates in networking (including Tor/TCP hosting when wired). There is no “connect a second Gun client to your own Gun server” pattern on RN.
 	- Focuses on **framed TCP** + Tor connectivity:
 		- Dial `.onion` peers via Tor SOCKS5.
 		- Host a framed TCP listener and publish it via a Tor v3 hidden service.
