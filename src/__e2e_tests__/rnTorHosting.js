@@ -1,5 +1,8 @@
 import app from '../runtime/rectifyApp';
 
+// eslint-disable-next-line global-require
+const { socks5HttpGetOrThrow } = require('guncelium-protocal');
+
 function requireObject(value, name) {
     if (!value || typeof value !== 'object') throw new Error(`${name} must be an object`);
 }
@@ -49,146 +52,7 @@ function requirePositiveInt(value, name, max) {
     return n;
 }
 
-function requireBufferLike(value, name) {
-    if (!value) throw new Error(`${name} is required`);
-    if (typeof value.length !== 'number') throw new Error(`${name} must have length`);
-    if (typeof value.slice !== 'function') throw new Error(`${name} must have slice()`);
-}
-
-function toAsciiStringOrThrow(buf) {
-    requireBufferLike(buf, 'buffer');
-    const bytes = (typeof Buffer !== 'undefined' && Buffer.isBuffer && Buffer.isBuffer(buf)) ? buf : null;
-    if (bytes) return bytes.toString('utf8');
-
-    // Fallback for Uint8Array-like objects.
-    const out = [];
-    const len = Math.min(Number(buf.length) || 0, 65536);
-    for (let i = 0; i < len; i++) out.push(String.fromCharCode(buf[i] & 0xff));
-    return out.join('');
-}
-
-async function socks5HttpGetOrThrow(opts) {
-    requireObject(opts, 'opts');
-    const socksHost = String(opts.socksHost || '127.0.0.1');
-    const socksPort = requirePositiveInt(opts.socksPort, 'opts.socksPort', 65535);
-    const targetHost = String(opts.targetHost || '').trim();
-    if (!targetHost) throw new Error('opts.targetHost must be non-empty');
-    const targetPort = requirePositiveInt(opts.targetPort, 'opts.targetPort', 65535);
-    const timeoutMs = requirePositiveInt(opts.timeoutMs, 'opts.timeoutMs', 120000);
-    const maxBytes = requirePositiveInt(opts.maxBytes, 'opts.maxBytes', 1024 * 1024);
-
-    // eslint-disable-next-line global-require
-    const TcpSocket = require('react-native-tcp-socket');
-    if (!TcpSocket || typeof TcpSocket.createConnection !== 'function') throw new Error('react-native-tcp-socket.createConnection is required');
-    if (typeof Buffer === 'undefined') throw new Error('global Buffer is required for SOCKS5 test');
-
-    const hostBytes = Buffer.from(targetHost, 'utf8');
-    if (hostBytes.length < 1 || hostBytes.length > 255) throw new Error('targetHost must be 1..255 bytes');
-
-    return await new Promise((resolve, reject) => {
-        let settled = false;
-        let phase = 'greeting';
-        let inBuf = Buffer.alloc(0);
-        let httpBuf = Buffer.alloc(0);
-        let timer = null;
-
-        const fail = (e) => {
-            if (settled) return;
-            settled = true;
-            try { if (timer) clearTimeout(timer); } catch (_e0) { }
-            try { if (socket) socket.destroy(); } catch (_e1) { }
-            reject(e);
-        };
-
-        const finish = (value) => {
-            if (settled) return;
-            settled = true;
-            try { if (timer) clearTimeout(timer); } catch (_e0) { }
-            try { if (socket) socket.destroy(); } catch (_e1) { }
-            resolve(value);
-        };
-
-        timer = setTimeout(() => fail(new Error('SOCKS5 httpGet timeout')), timeoutMs);
-
-        const socket = TcpSocket.createConnection({ host: socksHost, port: socksPort });
-        socket.on('error', (e) => fail(new Error(`SOCKS5 socket error: ${e && e.message ? e.message : String(e)}`)));
-        socket.on('close', () => {
-            if (phase === 'http') {
-                const text = httpBuf.toString('utf8');
-                const firstLine = (text.split('\r\n')[0] || '').trim();
-                const ok = /^HTTP\/[0-9.]+\s+200\b/.test(firstLine);
-                finish({ ok, statusLine: firstLine, text });
-                return;
-            }
-            if (!settled) fail(new Error(`SOCKS5 socket closed during phase=${phase}`));
-        });
-
-        socket.on('connect', () => {
-            // Greeting: version 5, 1 method, no-auth.
-            socket.write(Buffer.from([0x05, 0x01, 0x00]));
-        });
-
-        socket.on('data', (chunk) => {
-            if (settled) return;
-            inBuf = Buffer.concat([inBuf, chunk]);
-
-            if (phase === 'greeting') {
-                if (inBuf.length < 2) return;
-                const v = inBuf[0];
-                const method = inBuf[1];
-                inBuf = inBuf.slice(2);
-                if (v !== 0x05) return fail(new Error(`SOCKS5 bad version in greeting: ${String(v)}`));
-                if (method !== 0x00) return fail(new Error(`SOCKS5 no-auth not accepted: ${String(method)}`));
-
-                // CONNECT with domain name.
-                const portHi = (targetPort >> 8) & 0xff;
-                const portLo = targetPort & 0xff;
-                const req = Buffer.concat([
-                    Buffer.from([0x05, 0x01, 0x00, 0x03, hostBytes.length]),
-                    hostBytes,
-                    Buffer.from([portHi, portLo]),
-                ]);
-                phase = 'connect';
-                socket.write(req);
-            }
-
-            if (phase === 'connect') {
-                // Reply: VER, REP, RSV, ATYP, BND.ADDR..., BND.PORT...
-                if (inBuf.length < 5) return;
-                const ver = inBuf[0];
-                const rep = inBuf[1];
-                const atyp = inBuf[3];
-                if (ver !== 0x05) return fail(new Error(`SOCKS5 bad version in reply: ${String(ver)}`));
-                if (rep !== 0x00) return fail(new Error(`SOCKS5 connect failed rep=${String(rep)}`));
-
-                // Consume variable length address.
-                let addrLen = 0;
-                let headerLen = 0;
-                if (atyp === 0x01) { headerLen = 4 + 4 + 2; }
-                else if (atyp === 0x04) { headerLen = 4 + 16 + 2; }
-                else if (atyp === 0x03) {
-                    if (inBuf.length < 5) return;
-                    addrLen = inBuf[4];
-                    headerLen = 4 + 1 + addrLen + 2;
-                } else {
-                    return fail(new Error(`SOCKS5 unknown ATYP=${String(atyp)}`));
-                }
-                if (inBuf.length < headerLen) return;
-                inBuf = inBuf.slice(headerLen);
-
-                phase = 'http';
-                const reqText = `GET / HTTP/1.1\r\nHost: ${targetHost}\r\nConnection: close\r\n\r\n`;
-                socket.write(Buffer.from(reqText, 'utf8'));
-            }
-
-            if (phase === 'http') {
-                httpBuf = Buffer.concat([httpBuf, inBuf]);
-                inBuf = Buffer.alloc(0);
-                if (httpBuf.length > maxBytes) return fail(new Error(`HTTP response exceeded maxBytes=${String(maxBytes)}`));
-            }
-        });
-    });
-}
+if (typeof socks5HttpGetOrThrow !== 'function') throw new Error('guncelium-protocal.socks5HttpGetOrThrow is required');
 
 async function sleepMsOrThrow(ms) {
     const n = Number(ms);
