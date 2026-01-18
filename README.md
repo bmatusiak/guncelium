@@ -122,7 +122,19 @@ In Electron:
 - Gun can run in a classic HTTP/WS mode (for browser-style peers).
 - Gun can also run in a **TCP mesh mode** using `guncelium-protocal` (framed messages) so it can be hosted behind a Tor **hidden service**.
 
+Persistence (today):
+
+- Electron/Node Gun uses Gun’s built-in disk store via `file: <userData>/gun/radata`.
+
 The UI includes setup panels to start/stop Tor, create hidden services, and start/stop Gun.
+
+## Planned wiring
+
+These are the next topology/persistence goals (not all are implemented yet):
+
+- **SQLite as the default Gun store** across Electron + React Native, with deterministic default file locations (see “Persistence (Gun store)” below).
+- **React Native / Expo**: host Gun over the framed TCP protocol and expose it via a Tor v3 hidden service (static/random/vanity onions).
+- **Node service mode**: participate in the Tor/TCP mesh and also expose an HTTP/WS gateway for browser-style peers.
 
 ## Crypto (what we use and why)
 
