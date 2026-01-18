@@ -221,6 +221,16 @@ function createTorReactNativeApiOrThrow() {
         const cleanSlate = requireBooleanOrDefault(o.cleanSlate, 'opts.cleanSlate', false);
         void cleanSlate;
 
+        if (o.socksPort !== undefined && o.socksPort !== null) {
+            const desired = requirePort(o.socksPort, 'opts.socksPort');
+            if (desired !== state.socksPort) {
+                const RnTor = loadRnTorOrThrow();
+                const code = await RnTor.getServiceStatus();
+                if (isRunningFromStatusCode(code)) throw new Error('cannot change socksPort while tor is running');
+                state.socksPort = desired;
+            }
+        }
+
         const dataDir = await ensureDataDirOrThrow();
         const RnTor = loadRnTorOrThrow();
 

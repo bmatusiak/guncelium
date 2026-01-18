@@ -350,6 +350,8 @@ export default {
                 requireFunction(tor.hiddenServices.create, 'tor.hiddenServices.create');
                 requireFunction(tor.hiddenServices.status, 'tor.hiddenServices.status');
 
+                const expectedSocksPort = 8765;
+
                 const server = createTcpServerOrThrow();
                 let port = null;
                 let torStarted = false;
@@ -371,7 +373,7 @@ export default {
                     assert.ok(created.ok === true, 'hiddenServices.create must succeed');
 
                     log('starting tor...');
-                    const started = await tor.start({ cleanSlate: false });
+                    const started = await tor.start({ cleanSlate: false, socksPort: expectedSocksPort });
                     requireObject(started, 'tor.start result');
                     assert.ok(started.ok === true, 'tor.start must succeed');
                     torStarted = true;
@@ -402,6 +404,7 @@ export default {
 
                     const stAfter = await tor.status();
                     requireObject(stAfter, 'tor.status after start');
+                    assert.equal(stAfter.socksPort, expectedSocksPort, 'tor socksPort must match requested test port');
                     const socksPort = requirePositiveInt(stAfter.socksPort, 'tor.socksPort', 65535);
 
                     let last = null;
