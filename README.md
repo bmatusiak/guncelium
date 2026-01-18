@@ -1,5 +1,9 @@
 # Guncelium
 
+**Status: ALPHA.** This project is under active development and is **not ready for production applications** yet.
+
+**Platform note:** iOS is not supported yet because the lead developer does not currently have a Mac for development/testing.
+
 Guncelium is an **earth-based, local-first** networking stack for building apps that keep working when centralized infrastructure (the “cloud”) disappears.
 
 It combines:
