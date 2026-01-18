@@ -73,6 +73,21 @@ Practically, this means:
 - Shared module APIs in `modules/`, with environment-specific entrypoints (Node/Electron/RN) selected by the bundler/runtime.
 - Electron main behaves like a local “service node” so the renderer can stay closer to a browser-like environment.
 
+### Decentralized escrow bots (planned)
+
+Guncelium is also intended to grow into a network that can support **decentralized escrow/governance bots**.
+
+The goal is to enable **3rd-party AI services** to operate on the network and get paid for their work in a way that:
+
+- Doesn’t require trusting a single server/operator.
+- Preserves participant privacy (Tor).
+- Uses the shared Gun graph for coordination/state.
+
+These are currently **proposal/draft docs** (not implemented yet), but they represent a major direction for the project:
+
+- Decentralized autonomous bot governance over Tor + Gun: [docs/white-paper-decentralized-bot.md](docs/white-paper-decentralized-bot.md)
+- Decentralized data escrow for private AI computation + settlement: [docs/white-paper-decentralized-escro.md](docs/white-paper-decentralized-escro.md)
+
 ## Architecture (high-level)
 
 - **Control Plane**: Tor (onion identities, hidden services, NAT traversal via onion routing)
