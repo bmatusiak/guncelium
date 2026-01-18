@@ -407,29 +407,56 @@ export default {
                     assert.equal(stAfter.socksPort, expectedSocksPort, 'tor socksPort must match requested test port');
                     const socksPort = requirePositiveInt(stAfter.socksPort, 'tor.socksPort', 65535);
 
+                    await waitForOrThrow(
+                        async () => {
+                            const st = await tor.status();
+                            if (!st || typeof st !== 'object' || st.ok !== true) return null;
+                            if (st.running !== true) return null;
+                            return st;
+                        },
+                        'tor running',
+                        60,
+                        250,
+                    );
+
                     let last = null;
+                    let lastErr = null;
+                    let attempt = 0;
                     const http = await waitForOrThrow(
                         async () => {
-                            const r = await socks5HttpGetOrThrow({
-                                socksHost: '127.0.0.1',
-                                socksPort,
-                                targetHost: `${onion}.onion`,
-                                targetPort: onionServicePort,
-                                timeoutMs: 30000,
-                                maxBytes: 128 * 1024,
-                            });
-                            last = r;
-                            if (r && r.ok === true && typeof r.text === 'string' && r.text.includes('rnTorHosting')) return r;
-                            return null;
+                            attempt += 1;
+                            if (attempt === 1 || (attempt % 10) === 0) {
+                                const msg = lastErr && lastErr.message ? String(lastErr.message) : '';
+                                log(`SOCKS probe attempt ${String(attempt)} (lastErr=${msg || '<none>'})`);
+                            }
+                            try {
+                                const r = await socks5HttpGetOrThrow({
+                                    socksHost: '127.0.0.1',
+                                    socksPort,
+                                    targetHost: `${onion}.onion`,
+                                    targetPort: onionServicePort,
+                                    timeoutMs: 2500,
+                                    maxBytes: 128 * 1024,
+                                });
+                                last = r;
+                                lastErr = null;
+                                if (r && r.ok === true && typeof r.text === 'string' && r.text.includes('rnTorHosting')) return r;
+                                return null;
+                            } catch (e) {
+                                lastErr = e;
+                                return null;
+                            }
                         },
                         'SOCKS5 http 200 with marker',
-                        30,
-                        500,
+                        45,
+                        250,
                     ).catch((e) => {
                         const details = last && typeof last === 'object'
                             ? `last.ok=${String(last.ok)} last.statusLine=${String(last.statusLine || '')}`
                             : 'last=<none>';
-                        throw new Error(`${e && e.message ? e.message : String(e)} (${details})`);
+                        const errMsg = lastErr && lastErr.message ? String(lastErr.message) : '';
+                        const errDetails = errMsg ? ` last.err=${errMsg}` : '';
+                        throw new Error(`${e && e.message ? e.message : String(e)} (${details}${errDetails})`);
                     });
 
                     requireObject(http, 'SOCKS5 http result');

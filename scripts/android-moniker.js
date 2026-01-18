@@ -2,6 +2,7 @@
 
 const assert = require('node:assert');
 const { spawn } = require('node:child_process');
+const net = require('node:net');
 const readline = require('node:readline');
 
 function requireInt(value, name, min, max) {
@@ -11,6 +12,39 @@ function requireInt(value, name, min, max) {
 }
 
 const MAX_WAIT_MS = 6 * 60 * 60 * 1000; // 6 hours (bounded)
+
+async function isPortFreeOrThrow(port) {
+    const p = requireInt(port, 'port', 1, 65535);
+    return await new Promise((resolve, reject) => {
+        const server = net.createServer();
+        server.once('error', (e) => {
+            const code = e && e.code ? String(e.code) : '';
+            if (code === 'EADDRINUSE' || code === 'EACCES') {
+                resolve(false);
+                return;
+            }
+            reject(e);
+        });
+        server.once('listening', () => {
+            server.close((err) => {
+                if (err) reject(err);
+                else resolve(true);
+            });
+        });
+        server.listen({ host: '127.0.0.1', port: p });
+    });
+}
+
+async function pickPortOrThrow(ports) {
+    assert(Array.isArray(ports) && ports.length > 0, 'ports must be a non-empty array');
+    for (let i = 0; i < ports.length; i++) {
+        const p = requireInt(ports[i], `ports[${i}]`, 1, 65535);
+        // eslint-disable-next-line no-await-in-loop
+        const free = await isPortFreeOrThrow(p);
+        if (free) return p;
+    }
+    throw new Error('no free port found in fixed port list');
+}
 
 function parseMonikerCompleteOrNull(line) {
     const s = String(line || '');
@@ -111,21 +145,52 @@ async function stopChildOrThrow(child) {
     await waitForExitOrThrow(child, 10000);
 }
 
-async function mainOrThrow() {
+function spawnExpoOrThrow(args) {
+    assert(Array.isArray(args), 'args must be array');
     const child = spawn(
         process.platform === 'win32' ? 'npx.cmd' : 'npx',
-        ['expo', 'run:android'],
+        ['expo', ...args],
         {
             stdio: ['inherit', 'pipe', 'pipe'],
             detached: process.platform !== 'win32',
             env: { ...process.env },
         },
     );
+    assert(child && typeof child.pid === 'number', 'failed to spawn expo process');
+    return child;
+}
 
-    assert(child && typeof child.pid === 'number', 'failed to spawn expo run:android');
+function pumpLinesOrThrow(child, onLine) {
+    assert(child && typeof child.pid === 'number', 'child required');
+    assert(typeof onLine === 'function', 'onLine required');
 
     const rlOut = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
     const rlErr = readline.createInterface({ input: child.stderr, crlfDelay: Infinity });
+
+    rlOut.on('line', (line) => {
+        onLine(String(line), false).catch((e) => {
+            const msg = e && e.stack ? e.stack : (e && e.message ? e.message : String(e));
+            // eslint-disable-next-line no-console
+            console.error(msg);
+            process.exit(2);
+        });
+    });
+
+    rlErr.on('line', (line) => {
+        onLine(String(line), true).catch((e) => {
+            const msg = e && e.stack ? e.stack : (e && e.message ? e.message : String(e));
+            // eslint-disable-next-line no-console
+            console.error(msg);
+            process.exit(2);
+        });
+    });
+}
+
+async function mainOrThrow() {
+    // IMPORTANT: we need to own the log stream that prints Moniker output.
+    // Use expo start (bundler) and launch Android from it.
+    const port = await pickPortOrThrow([8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088, 8089, 8090, 8091]);
+    const bundler = spawnExpoOrThrow(['start', '--dev-client', '--android', '--port', String(port)]);
 
     let done = false;
     let desiredExitCode = null;
@@ -135,6 +200,18 @@ async function mainOrThrow() {
         if (isErr) process.stderr.write(`${s}\n`);
         else process.stdout.write(`${s}\n`);
 
+        if (!done && s.includes('CommandError:')) {
+            done = true;
+            try { await stopChildOrThrow(bundler); } catch (_e0) { }
+            throw new Error(`expo command failed: ${s}`);
+        }
+
+        if (!done && s.includes('Port ') && s.includes('is running this app in another window')) {
+            done = true;
+            try { await stopChildOrThrow(bundler); } catch (_e0) { }
+            throw new Error(`unexpected port collision even after preflight; choose a different base port list or stop the other Expo process: ${s}`);
+        }
+
         if (done) return;
         const parsed = parseMonikerCompleteOrNull(s);
         if (!parsed) return;
@@ -143,38 +220,20 @@ async function mainOrThrow() {
         desiredExitCode = parsed.failed > 0 ? 1 : 0;
 
         try {
-            await stopChildOrThrow(child);
+            await stopChildOrThrow(bundler);
         } catch (e) {
             const msg = e && e.message ? e.message : String(e);
-            throw new Error(`Moniker complete detected, but failed to stop expo process: ${msg}`);
+            throw new Error(`Moniker complete detected, but failed to stop expo bundler: ${msg}`);
         }
 
         process.exit(desiredExitCode);
     };
 
-    rlOut.on('line', (line) => {
-        onLine(line, false).catch((e) => {
-            const msg = e && e.stack ? e.stack : (e && e.message ? e.message : String(e));
-            // eslint-disable-next-line no-console
-            console.error(msg);
-            process.exit(2);
-        });
-    });
-    rlErr.on('line', (line) => {
-        onLine(line, true).catch((e) => {
-            const msg = e && e.stack ? e.stack : (e && e.message ? e.message : String(e));
-            // eslint-disable-next-line no-console
-            console.error(msg);
-            process.exit(2);
-        });
-    });
+    pumpLinesOrThrow(bundler, onLine);
 
-    const { code, signal } = await waitForExitOrThrow(child, MAX_WAIT_MS);
-
+    const { code, signal } = await waitForExitOrThrow(bundler, MAX_WAIT_MS);
     if (desiredExitCode !== null) process.exit(desiredExitCode);
-
-    // Child exited without emitting Moniker completion.
-    throw new Error(`expo run:android exited early (code=${String(code)} signal=${String(signal)}) before Moniker completion`);
+    throw new Error(`expo bundler exited early (code=${String(code)} signal=${String(signal)}) before Moniker completion`);
 }
 
 mainOrThrow().catch((e) => {
