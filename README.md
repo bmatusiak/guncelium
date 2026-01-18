@@ -136,6 +136,25 @@ These are the next topology/persistence goals (not all are implemented yet):
 - **React Native / Expo**: host Gun over the framed TCP protocol and expose it via a Tor v3 hidden service (static/random/vanity onions).
 - **Node service mode**: participate in the Tor/TCP mesh and also expose an HTTP/WS gateway for browser-style peers.
 
+## Networking (Node.js + React Native ports)
+
+If you’re maintaining a Gun port (or a custom runtime) and want to join the Guncelium TCP mesh, start here:
+
+- Protocol + design notes: [docs/networking-nodejs-and-react-native.md](docs/networking-nodejs-and-react-native.md)
+- Canonical implementation (what the app actually uses): [modules/guncelium-protocal/socketAdapter.js](modules/guncelium-protocal/socketAdapter.js)
+
+At a high level:
+
+- Transport is a **framed TCP stream**: a fixed 5-byte header (`u32be length` + `u8 type`) followed by `length` bytes payload.
+- Peers are addressed as `tcp://host:port` (direct) or via Tor as `<56chars>.onion` + a virtual port.
+- On `.onion` dial-out, the connector speaks **SOCKS5** to the local Tor SOCKS port (typically `127.0.0.1:9050`) before switching to framed application traffic.
+- The adapter exposes a WebSocket-like surface (`onopen`, `onmessage`, `onclose`, `send`) so Gun mesh can treat TCP like a “wire”.
+
+Porting checklist:
+
+- Provide a socket implementation with deterministic lifecycle (connect, data events, close) equivalent to Node’s `net.Socket` / RN TCP sockets.
+- Enforce hard bounds (max frame size, bounded waits/retries) and fail-fast on malformed frames or failed SOCKS5 handshakes.
+
 ## Crypto (what we use and why)
 
 Guncelium has two distinct cryptographic domains:
