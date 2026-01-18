@@ -125,6 +125,32 @@ function pathToFileUriOrThrow(pathValue, name) {
     return uri.replace(/^file:\/\/+/, 'file:///');
 }
 
+function computeTorDataDirPathOrThrow(FS) {
+    if (!FS || typeof FS !== 'object') throw new Error('FS must be an object');
+    if (typeof FS.documentDirectory !== 'string' || FS.documentDirectory.trim().length === 0) throw new Error('FS.documentDirectory is required');
+    const base = fileUriToPathOrThrow(String(FS.documentDirectory), 'FS.documentDirectory');
+    return base.endsWith('/') ? `${base}guncelium/tor` : `${base}/guncelium/tor`;
+}
+
+function loadExpoFsLegacyOrThrow() {
+    // eslint-disable-next-line global-require
+    const FS = require('expo-file-system/legacy');
+    if (!FS || typeof FS !== 'object') throw new Error('expo-file-system/legacy did not export an object');
+    if (typeof FS.documentDirectory !== 'string' || FS.documentDirectory.trim().length === 0) throw new Error('expo-file-system/legacy.documentDirectory is required');
+    if (typeof FS.makeDirectoryAsync !== 'function') throw new Error('expo-file-system/legacy.makeDirectoryAsync is required');
+    if (typeof FS.getInfoAsync !== 'function') throw new Error('expo-file-system/legacy.getInfoAsync is required');
+    if (typeof FS.readAsStringAsync !== 'function') throw new Error('expo-file-system/legacy.readAsStringAsync is required');
+    if (typeof FS.writeAsStringAsync !== 'function') throw new Error('expo-file-system/legacy.writeAsStringAsync is required');
+    if (typeof FS.deleteAsync !== 'function') throw new Error('expo-file-system/legacy.deleteAsync is required');
+    return FS;
+}
+
+function hiddenServicesKeysFilePathOrThrow(dataDir) {
+    requireString(dataDir, 'dataDir');
+    const base = String(dataDir).replace(/\/+$/, '');
+    return `${base}/hidden-services.json`;
+}
+
 function stripOnionSuffix(value) {
     if (value === undefined || value === null) return null;
     let s = String(value).trim();
@@ -182,19 +208,23 @@ function createTorReactNativeApiOrThrow() {
     async function ensureDataDirOrThrow() {
         if (state.dataDir) return state.dataDir;
 
-        // expo-file-system exports legacy function stubs from the root that throw at runtime.
-        // Use the legacy module for stable documentDirectory + makeDirectoryAsync.
-        // eslint-disable-next-line global-require
-        const FS = require('expo-file-system/legacy');
-        if (!FS || typeof FS !== 'object') throw new Error('expo-file-system/legacy did not export an object');
-        if (typeof FS.documentDirectory !== 'string' || FS.documentDirectory.trim().length === 0) throw new Error('expo-file-system/legacy.documentDirectory is required');
-        if (typeof FS.makeDirectoryAsync !== 'function') throw new Error('expo-file-system/legacy.makeDirectoryAsync is required');
-
-        const base = fileUriToPathOrThrow(String(FS.documentDirectory), 'expo-file-system/legacy.documentDirectory');
-        const dir = base.endsWith('/') ? `${base}guncelium/tor` : `${base}/guncelium/tor`;
+        const FS = loadExpoFsLegacyOrThrow();
+        const dir = computeTorDataDirPathOrThrow(FS);
         await FS.makeDirectoryAsync(pathToFileUriOrThrow(dir, 'tor dataDir'), { intermediates: true });
         state.dataDir = dir;
         return dir;
+    }
+
+    async function resetDataDirOrThrow() {
+        const FS = loadExpoFsLegacyOrThrow();
+        const current = state.dataDir;
+        state.pendingHs = null;
+        state.lastStart = null;
+        state.dataDir = null;
+
+        if (!current) return { ok: true, removed: null };
+        await FS.deleteAsync(pathToFileUriOrThrow(current, 'tor dataDir'), { idempotent: true });
+        return { ok: true, removed: current };
     }
 
     async function info() {
@@ -216,10 +246,46 @@ function createTorReactNativeApiOrThrow() {
         return info();
     }
 
+    async function install(opts) {
+        if (opts !== undefined && opts !== null) requireObject(opts, 'opts');
+        // On React Native, Tor is provided by the native module; "install" verifies prerequisites.
+        const dataDir = await ensureDataDirOrThrow();
+        const RnTor = loadRnTorOrThrow();
+        const code = await RnTor.getServiceStatus();
+        return {
+            ok: true,
+            installed: true,
+            running: isRunningFromStatusCode(code),
+            mode: 'react-native',
+            socksPort: state.socksPort,
+            dataDir,
+            native: { serviceStatus: code },
+        };
+    }
+
+    async function uninstall() {
+        // Best-effort parity: remove only app-owned Tor data, not the native library.
+        const RnTor = loadRnTorOrThrow();
+        const code = await RnTor.getServiceStatus();
+        if (isRunningFromStatusCode(code)) {
+            const ok = await RnTor.shutdownService();
+            if (ok !== true) throw new Error('tor shutdown failed');
+        }
+        return await resetDataDirOrThrow();
+    }
+
     async function start(opts) {
         const o = (opts && typeof opts === 'object') ? opts : {};
         const cleanSlate = requireBooleanOrDefault(o.cleanSlate, 'opts.cleanSlate', false);
-        void cleanSlate;
+        if (cleanSlate === true) {
+            const RnTor = loadRnTorOrThrow();
+            const code = await RnTor.getServiceStatus();
+            if (isRunningFromStatusCode(code)) {
+                const ok = await RnTor.shutdownService();
+                if (ok !== true) throw new Error('tor shutdown failed');
+            }
+            await resetDataDirOrThrow();
+        }
 
         if (o.socksPort !== undefined && o.socksPort !== null) {
             const desired = requirePort(o.socksPort, 'opts.socksPort');
@@ -333,6 +399,42 @@ function createTorReactNativeApiOrThrow() {
         return { ok: true, pending: true, service, localPort, virtualPort, keyCount: keys.length };
     }
 
+    async function saveHiddenServices(opts) {
+        requireObject(opts, 'opts');
+        requireArray(opts.keys, 'opts.keys');
+
+        const FS = loadExpoFsLegacyOrThrow();
+        const dataDir = await ensureDataDirOrThrow();
+        const filePath = hiddenServicesKeysFilePathOrThrow(dataDir);
+        const fileUri = pathToFileUriOrThrow(filePath, 'hidden services file');
+        const payload = { keys: opts.keys };
+        await FS.writeAsStringAsync(fileUri, JSON.stringify(payload, null, 2), { encoding: 'utf8' });
+        return { ok: true, path: fileUri, keys: payload.keys };
+    }
+
+    async function listHiddenServices() {
+        const FS = loadExpoFsLegacyOrThrow();
+        const dataDir = state.dataDir || computeTorDataDirPathOrThrow(FS);
+        const filePath = hiddenServicesKeysFilePathOrThrow(dataDir);
+        const fileUri = pathToFileUriOrThrow(filePath, 'hidden services file');
+
+        const info = await FS.getInfoAsync(fileUri);
+        if (!info || typeof info !== 'object') throw new Error('FS.getInfoAsync returned non-object');
+        if (info.exists !== true) return { ok: true, keys: [] };
+
+        const raw = await FS.readAsStringAsync(fileUri, { encoding: 'utf8' });
+        const parsed = JSON.parse(String(raw || '{}'));
+        const keys = (parsed && Array.isArray(parsed.keys)) ? parsed.keys : [];
+        return { ok: true, keys };
+    }
+
+    async function controlCheck(opts) {
+        requireObject(opts, 'opts');
+        requireString(opts.host, 'opts.host');
+        requirePort(opts.port, 'opts.port');
+        throw new Error('tor.control.check is not supported on react-native (no ControlPort access)');
+    }
+
     async function hiddenServicesStatus() {
         const last = state.lastStart;
         const pending = state.pendingHs;
@@ -356,13 +458,20 @@ function createTorReactNativeApiOrThrow() {
 
     return {
         // Electron API parity: install/uninstall are desktop-only.
+        install,
+        uninstall,
         start,
         stop,
         status,
         info,
         hiddenServices: {
+            save: saveHiddenServices,
+            list: listHiddenServices,
             create: configureHiddenService,
             status: hiddenServicesStatus,
+        },
+        control: {
+            check: controlCheck,
         },
         httpGet,
     };

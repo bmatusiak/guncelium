@@ -12,6 +12,28 @@ function requireObject(value, name) {
     if (!value || typeof value !== 'object') throw new Error(`${name} must be an object`);
 }
 
+function isNonEmptyString(value) {
+    return typeof value === 'string' && value.trim().length > 0;
+}
+
+async function invokeOrThrow(ipcRenderer, channel, payload) {
+    requireObject(ipcRenderer, 'ipcRenderer');
+    if (typeof ipcRenderer.invoke !== 'function') throw new Error('ipcRenderer.invoke must be a function');
+    if (!isNonEmptyString(channel)) throw new Error('channel must be a non-empty string');
+
+    const result = await ipcRenderer.invoke(channel, payload);
+    if (!result || typeof result !== 'object') return result;
+
+    if (result.ok === false) {
+        const msg = isNonEmptyString(result.error) ? result.error : 'tor operation failed';
+        throw new Error(msg);
+    }
+    if (isNonEmptyString(result.error)) {
+        throw new Error(result.error);
+    }
+    return result;
+}
+
 function createTorElectronApi() {
     const ipcRenderer = requireElectronIpcRendererOrThrow();
     const CHANNEL_PREFIX = 'tor:';
@@ -19,46 +41,46 @@ function createTorElectronApi() {
     return {
         install: async (opts) => {
             if (opts !== undefined) requireObject(opts, 'opts');
-            return ipcRenderer.invoke(CHANNEL_PREFIX + 'install', opts || {});
+            return invokeOrThrow(ipcRenderer, CHANNEL_PREFIX + 'install', opts || {});
         },
         uninstall: async () => {
-            return ipcRenderer.invoke(CHANNEL_PREFIX + 'uninstall');
+            return invokeOrThrow(ipcRenderer, CHANNEL_PREFIX + 'uninstall');
         },
         info: async () => {
-            return ipcRenderer.invoke(CHANNEL_PREFIX + 'info');
+            return invokeOrThrow(ipcRenderer, CHANNEL_PREFIX + 'info');
         },
         start: async (opts) => {
             if (opts !== undefined) requireObject(opts, 'opts');
-            return ipcRenderer.invoke(CHANNEL_PREFIX + 'start', opts || {});
+            return invokeOrThrow(ipcRenderer, CHANNEL_PREFIX + 'start', opts || {});
         },
         stop: async () => {
-            return ipcRenderer.invoke(CHANNEL_PREFIX + 'stop');
+            return invokeOrThrow(ipcRenderer, CHANNEL_PREFIX + 'stop');
         },
         hiddenServices: {
             save: async (opts) => {
                 if (opts !== undefined) requireObject(opts, 'opts');
-                return ipcRenderer.invoke(CHANNEL_PREFIX + 'hidden-services:save', opts || {});
+                return invokeOrThrow(ipcRenderer, CHANNEL_PREFIX + 'hidden-services:save', opts || {});
             },
             list: async () => {
-                return ipcRenderer.invoke(CHANNEL_PREFIX + 'hidden-services:list');
+                return invokeOrThrow(ipcRenderer, CHANNEL_PREFIX + 'hidden-services:list');
             },
             create: async (opts) => {
                 if (opts !== undefined) requireObject(opts, 'opts');
-                return ipcRenderer.invoke(CHANNEL_PREFIX + 'hidden-services:create', opts || {});
+                return invokeOrThrow(ipcRenderer, CHANNEL_PREFIX + 'hidden-services:create', opts || {});
             },
             status: async () => {
-                return ipcRenderer.invoke(CHANNEL_PREFIX + 'hidden-services:status');
+                return invokeOrThrow(ipcRenderer, CHANNEL_PREFIX + 'hidden-services:status');
             },
         },
         control: {
             check: async (opts) => {
                 if (opts !== undefined) requireObject(opts, 'opts');
-                return ipcRenderer.invoke(CHANNEL_PREFIX + 'control:check', opts || {});
+                return invokeOrThrow(ipcRenderer, CHANNEL_PREFIX + 'control:check', opts || {});
             },
         },
         status: async () => {
             // tor:info returns installed/running and is the canonical status shape.
-            return ipcRenderer.invoke(CHANNEL_PREFIX + 'info');
+            return invokeOrThrow(ipcRenderer, CHANNEL_PREFIX + 'info');
         },
     };
 }
