@@ -1,4 +1,4 @@
-package com.guncelium
+package us.bmatusiak.guncelium
 
 import android.app.Application
 import android.content.res.Configuration

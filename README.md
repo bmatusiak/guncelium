@@ -43,7 +43,7 @@ npm install
 ### Electron
 
 ```sh
-npm run electron
+npm run electron:start
 ```
 
 ### Expo (mobile/web)
@@ -56,11 +56,35 @@ npm start
 
 There isn’t a Jest-style test runner wired up yet. The primary verification path right now is an **in-app E2E harness** (Test Moniker) plus a **Node CLI smoke test**.
 
+### Expo / React Native (CLI + smoke checks)
+
+Run the app on devices/simulators:
+
+- Metro + Dev Client: `npm start`
+- Android (dev build): `npm run android`
+- iOS (dev build): `npm run ios`
+- Web (Expo web): `npm run web`
+
+Sanity-check the Expo project:
+
+- `npx expo-doctor` (runs diagnostics for the project)
+- `npx expo config --type public` (prints the resolved Expo config)
+- `npx expo --version`
+
+Native regeneration (CNG/prebuild):
+
+- `npx expo prebuild` (regenerates `android/` + `ios/` from Expo config)
+
+Notes:
+
+- The current in-app E2E test (below) is **Electron-renderer only** and will fail on Expo because it requires the Electron preload bridge (`window.ElectronNative`).
+- React Native Tor hosting + Gun-over-TCP hosting tests are not wired up yet (work in progress).
+
 ### E2E (Electron UI / Test Moniker)
 
 This runs inside the Electron renderer and uses the real Tor + Gun services.
 
-- Start Electron: `npm run electron`
+- Start Electron: `npm run electron:start`
 - In the app UI, open the **Test Moniker** panel
 - Run: **“Tor: host Gun TCP as hidden service”**
 

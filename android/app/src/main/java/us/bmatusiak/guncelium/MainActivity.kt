@@ -1,4 +1,4 @@
-package com.guncelium
+package us.bmatusiak.guncelium
 
 import android.os.Build
 import android.os.Bundle

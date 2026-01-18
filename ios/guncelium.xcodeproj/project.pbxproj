@@ -259,12 +259,14 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = org.name.guncelium;
-				PRODUCT_NAME = guncelium;
+				PRODUCT_BUNDLE_IDENTIFIER = "us.bmatusiak.guncelium";
+				PRODUCT_NAME = "guncelium";
 				SWIFT_OBJC_BRIDGING_HEADER = "guncelium/guncelium-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
 				VERSIONING_SYSTEM = "apple-generic";
+				TARGETED_DEVICE_FAMILY = "1";
+				CODE_SIGN_ENTITLEMENTS = guncelium/guncelium.entitlements;
 			};
 			name = Debug;
 		};
@@ -286,11 +288,13 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = org.name.guncelium;
-				PRODUCT_NAME = guncelium;
+				PRODUCT_BUNDLE_IDENTIFIER = "us.bmatusiak.guncelium";
+				PRODUCT_NAME = "guncelium";
 				SWIFT_OBJC_BRIDGING_HEADER = "guncelium/guncelium-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				VERSIONING_SYSTEM = "apple-generic";
+				TARGETED_DEVICE_FAMILY = "1";
+				CODE_SIGN_ENTITLEMENTS = guncelium/guncelium.entitlements;
 			};
 			name = Release;
 		};

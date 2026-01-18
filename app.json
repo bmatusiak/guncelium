@@ -3,9 +3,17 @@
     "name": "guncelium",
     "slug": "guncelium",
     "version": "1.0.0",
+    "icon": "./assets/icon.png",
     "scheme": "guncelium",
     "android": {
-      "package": "us.bmatusiak.guncelium"
+      "package": "us.bmatusiak.guncelium",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0F172A"
+      }
+    },
+    "ios": {
+      "bundleIdentifier": "us.bmatusiak.guncelium"
     }
   }
 }
