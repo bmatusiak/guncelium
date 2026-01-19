@@ -161,16 +161,16 @@ export default {
 
                     // Data swap + validation (proves bidirectional comms, not just presence).
                     const myValue = `${role}-${Date.now()}`;
+                    let gotBoth = null;
+                    coord.on('duoData', (p) => { gotBoth = p; });
                     log('sending duo data...');
                     await new Promise((resolve, reject) => {
                         coord.emit('duoData', { role, value: myValue }, (ack) => {
                             if (!ack || ack.ok !== true) return reject(new Error(`duoData ack failed: ${ack && ack.error ? ack.error : 'unknown'}`));
+                            if (ack && ack.both && typeof ack.both === 'object') gotBoth = ack.both;
                             return resolve();
                         });
                     });
-
-                    let gotBoth = null;
-                    coord.on('duoData', (p) => { gotBoth = p; });
                     log('waiting for peer data...');
                     await waitForFlagOrThrow(() => !!gotBoth, 'duoData broadcast (duo)', 240, 500);
 

@@ -268,13 +268,15 @@ function startDuoCoordinatorOrThrow() {
 
                 state.data[role] = { role, value };
 
-                if (state.data.electron && state.data.android) {
-                    const both = { ok: true, electron: state.data.electron, android: state.data.android };
+                const bothReady = !!(state.data.electron && state.data.android);
+                const both = bothReady ? { ok: true, electron: state.data.electron, android: state.data.android } : null;
+
+                if (bothReady) {
                     if (state.electron) state.electron.emit('duoData', both);
                     if (state.android) state.android.emit('duoData', both);
                 }
 
-                if (typeof ack === 'function') ack({ ok: true });
+                if (typeof ack === 'function') ack(both ? { ok: true, both } : { ok: true });
             } catch (e) {
                 if (typeof ack === 'function') ack({ ok: false, error: e && e.message ? e.message : String(e) });
             }
