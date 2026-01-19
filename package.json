@@ -11,6 +11,7 @@
     "start": "expo start --dev-client",
     "android": "expo run:android",
     "android:moniker": "node scripts/android-moniker.js",
+    "android:duo": "node scripts/duo-electron-android.js",
     "ios": "expo run:ios",
     "web": "expo start --web",
     "electron:start": "expo-electron start",

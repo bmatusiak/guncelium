@@ -2,6 +2,8 @@ import app from '../runtime/rectifyApp';
 import Gun from 'gun/gun';
 import 'gun/sea.js';
 
+import { pickGunTorHostingKeysOrThrow } from '../tor/keyPool';
+
 function isElectronRenderer() {
     const root = (typeof globalThis !== 'undefined') ? globalThis : (typeof window !== 'undefined' ? window : null);
     const hasDom = (typeof window === 'object' && window && typeof window.document !== 'undefined');
@@ -217,11 +219,20 @@ async function startTorOrThrow(tor) {
     return started;
 }
 
-async function createHiddenServiceOrThrow(tor, gunPort) {
+function requireV3OnionHostname(value, name) {
+    const s = String(value || '').trim();
+    if (!/^[a-z2-7]{56}$/i.test(s)) throw new Error(`${name} must be a v3 onion base32 hostname (no .onion), got: ${s}`);
+    return s;
+}
+
+async function createHiddenServiceOrThrow(tor, gunPort, keys) {
+    requireObject(tor, 'tor');
+    requireObject(tor.hiddenServices, 'tor.hiddenServices');
+    requireFunction(tor.hiddenServices.create, 'tor.hiddenServices.create');
+    if (!Array.isArray(keys) || keys.length < 1) throw new Error('keys must be a non-empty array');
+
     const created = await tor.hiddenServices.create({
-        // NOTE: createHiddenServices config is per-key entry; an empty list creates no HS.
-        // Passing an empty object creates one HS dir and allows Tor to generate keys.
-        keys: [{}],
+        keys,
         port: gunPort,
         virtualPort: 8888,
         service: 'gun-tcp',
@@ -232,26 +243,39 @@ async function createHiddenServiceOrThrow(tor, gunPort) {
     return created;
 }
 
-async function waitForOnionOrThrow(tor) {
+async function waitForOnionOrThrow(tor, expectedOnion) {
+    const want = requireV3OnionHostname(expectedOnion, 'expectedOnion');
     const st = await waitForOrThrow(
         async () => {
             const s = await tor.hiddenServices.status();
             if (!s || typeof s !== 'object' || s.ok !== true) return null;
             if (!Array.isArray(s.results) || s.results.length < 1) return null;
-            const r0 = s.results[0];
-            if (!r0 || typeof r0 !== 'object') return null;
-            if (!r0.onion) return null;
+            let found = false;
+            for (let i = 0; i < s.results.length; i++) {
+                const r = s.results[i];
+                if (!r || typeof r !== 'object') continue;
+                if (r.onion && String(r.onion).toLowerCase() === String(want).toLowerCase()) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return null;
             return s;
         },
-        'hidden service onion hostname',
+        'hidden service onion hostname (expected)',
         120,
         500,
     );
 
-    const r0 = st.results[0];
-    const onion = String(r0.onion);
-    // Our Tor module returns the base32 hostname WITHOUT the `.onion` suffix.
-    if (!/^[a-z2-7]{56}$/i.test(onion)) throw new Error(`expected v3 onion base32 hostname, got: ${onion}`);
+    let onion = null;
+    for (let i = 0; i < st.results.length; i++) {
+        const r = st.results[i];
+        if (r && typeof r === 'object' && r.onion && String(r.onion).toLowerCase() === String(want).toLowerCase()) {
+            onion = String(r.onion);
+            break;
+        }
+    }
+    requireString(onion, 'found onion');
     return st;
 }
 
@@ -288,10 +312,23 @@ export default {
                     log('verifying renderer can sync to main-hosted gun...');
                     await assertRendererGunSyncOrThrow(assert, log, gun);
 
+                    // eslint-disable-next-line global-require
+                    const { generateV3OnionVanity } = require('guncelium-tor/onion');
+                    if (typeof generateV3OnionVanity !== 'function') throw new Error('guncelium-tor/onion.generateV3OnionVanity not available');
+
+                    // Generate the random onion identity BEFORE starting Tor, and use it as the peerId.
+                    // Deterministic bound: maxAttempts=1 always succeeds for non-vanity generation.
+                    const randomKey = generateV3OnionVanity({ prefix: null, maxAttempts: 1 });
+                    requireObject(randomKey, 'randomKey');
+                    requireString(randomKey.onion, 'randomKey.onion');
+                    requireString(randomKey.seed_hex, 'randomKey.seed_hex');
+                    requireString(randomKey.pub_hex, 'randomKey.pub_hex');
+                    const peerId = requireV3OnionHostname(randomKey.onion, 'peerId');
+
                     log('starting gun tcp...');
                     const tempDir = await getElectronTempDirOrThrow();
                     const tcpStoreDir = joinPathOrThrow(tempDir, `guncelium-e2e-gun-tcp-${nowMs()}-${randomSuffixOrThrow()}`);
-                    gunStarted = await gun.tcpStart({ host: '127.0.0.1', port: 0, peers: [], storeDir: tcpStoreDir });
+                    gunStarted = await gun.tcpStart({ host: '127.0.0.1', port: 0, peerId, peers: [], storeDir: tcpStoreDir });
                     requireObject(gunStarted, 'gun.tcpStart result');
                     assert.ok(gunStarted.ok === true && gunStarted.running === true, 'gun tcp must be running');
                     assert.ok(!!gunStarted.port, 'gun tcp must have a port');
@@ -309,18 +346,26 @@ export default {
                     }
 
                     log('creating hidden service config...');
-                    await createHiddenServiceOrThrow(tor, gunStarted.port);
+                    const bootstrapOnly = pickGunTorHostingKeysOrThrow({ bootstrapCount: 1, includeRandom: false });
+                    if (!Array.isArray(bootstrapOnly) || bootstrapOnly.length !== 1) throw new Error('bootstrap key selection failed');
+                    const hsKeys = [bootstrapOnly[0], {
+                        onion: randomKey.onion,
+                        seed_hex: randomKey.seed_hex,
+                        pub_hex: randomKey.pub_hex,
+                        generate: false,
+                    }];
+                    await createHiddenServiceOrThrow(tor, gunStarted.port, hsKeys);
 
                     log('starting tor...');
                     await startTorOrThrow(tor);
                     torStarted = true;
 
                     log('waiting for onion hostname...');
-                    const hsStatus = await waitForOnionOrThrow(tor);
+                    const hsStatus = await waitForOnionOrThrow(tor, peerId);
                     requireObject(hsStatus, 'hsStatus');
                     assert.equal(hsStatus.service, 'gun-tcp', 'service name should be gun-tcp');
 
-                    log('ok', `${hsStatus.results[0].onion}.onion`);
+                    log('ok', `${peerId}.onion`);
                 } catch (e) {
                     // cleanup (do not swallow failures; rethrow original error)
                     try {
