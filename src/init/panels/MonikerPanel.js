@@ -2,10 +2,8 @@ import React from 'react';
 import { Text, View } from 'react-native';
 
 import duoAlign from '../../__e2e_tests__/duoAlign';
-import torProtoExchangeHost from '../../__e2e_tests__/torProtoExchangeHost';
-import torProtoExchangeClient from '../../__e2e_tests__/torProtoExchangeClient';
-import rnTorSmoke from '../../__e2e_tests__/rnTorSmoke';
-import rnTorHosting from '../../__e2e_tests__/rnTorHosting';
+import gunLocalElectron from '../../__e2e_tests__/gunLocalElectron';
+import gunLocalReactNative from '../../__e2e_tests__/gunLocalReactNative';
 
 export default function MonikerPanel({ moniker }) {
     if (!moniker) {
@@ -27,11 +25,9 @@ export default function MonikerPanel({ moniker }) {
                 // Duo section: both devices online
                 duoAlign,
 
-                // Tor
-                rnTorSmoke,
-                rnTorHosting,
-                torProtoExchangeHost,
-                torProtoExchangeClient,
+                // Gun (local-first)
+                gunLocalElectron,
+                gunLocalReactNative,
             ]} />
         </View>
     );

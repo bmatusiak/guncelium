@@ -8,6 +8,7 @@
   "main": "index.js",
   "react-native": "react-native/index.js",
   "dependencies": {
+    "better-sqlite3": "^11.10.0",
     "gun": "github:amark/gun",
     "gun-rebuild": "github:bmatusiak/gun-rebuild",
     "gun-rebuild-sea": "github:bmatusiak/gun-rebuild-sea",

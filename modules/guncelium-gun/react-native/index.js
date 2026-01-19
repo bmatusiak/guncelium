@@ -171,6 +171,17 @@ function createGunReactNativeApiOrThrow() {
     // eslint-disable-next-line global-require
     require('gun/sea.js');
 
+    // Ensure RAD storage modules are present when using a custom store.
+    // eslint-disable-next-line global-require
+    require('gun/lib/radix.js');
+    // eslint-disable-next-line global-require
+    require('gun/lib/radisk.js');
+    // eslint-disable-next-line global-require
+    require('gun/lib/store.js');
+
+    // eslint-disable-next-line global-require
+    const { createGunSqliteStoreOrThrow } = require('./sqliteGunStore');
+
     ensureNativeSeaInstalledOrThrow(Gun);
 
     const state = {
@@ -235,9 +246,18 @@ function createGunReactNativeApiOrThrow() {
 
         const peers = normalizePeersOrThrow(o.peers);
 
+        // Persist local Gun RAD data into SQLite by default.
+        // (Expo: uses expo-sqlite; fail-fast if misconfigured.)
+        const sqliteDbName = (o.sqliteDbName === undefined || o.sqliteDbName === null)
+            ? 'gun_storage.db'
+            : String(o.sqliteDbName);
+        requireString(sqliteDbName, 'opts.sqliteDbName');
+        const store = createGunSqliteStoreOrThrow(sqliteDbName);
+
         const gun = Gun({
             peers,
             localStorage: false,
+            store,
         });
         requireObjectLike(gun, 'gun');
         if (typeof gun.get !== 'function') throw new Error('gun initialization failed (missing get)');

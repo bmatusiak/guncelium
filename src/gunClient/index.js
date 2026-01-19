@@ -83,7 +83,9 @@ export default function setup(imports, register) {
             peers: [peerUrl],
             localStorage: false,
         });
-        if (!gun || typeof gun !== 'function') throw new Error('Gun() did not return an instance');
+        const gunType = typeof gun;
+        if (!gun || (gunType !== 'function' && gunType !== 'object')) throw new Error('Gun() did not return an instance');
+        if (typeof gun.get !== 'function') throw new Error('Gun() instance missing get()');
 
         state.gun = gun;
         state.peerUrl = peerUrl;

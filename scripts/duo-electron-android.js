@@ -361,30 +361,19 @@ async function waitForExitOrThrow(child, timeoutMs) {
 async function stopChildOrThrow(child) {
     assert(child && typeof child.pid === 'number', 'child.pid required');
 
-    try {
-        killProcessGroupOrThrow(child, 'SIGINT');
-    } catch (e) {
-        throw new Error(`failed to SIGINT child: ${e && e.message ? e.message : String(e)}`);
-    }
-
-    try {
-        await waitForExitOrThrow(child, 10000);
-        return;
-    } catch (_e0) {
-        // continue
-    }
-
+    // Prefer SIGTERM for clean exits (avoid SIGINT being treated as failure by some tools).
     try {
         killProcessGroupOrThrow(child, 'SIGTERM');
     } catch (e) {
         throw new Error(`failed to SIGTERM child: ${e && e.message ? e.message : String(e)}`);
     }
 
+    let lastError = null;
     try {
         await waitForExitOrThrow(child, 10000);
         return;
-    } catch (_e1) {
-        // continue
+    } catch (e) {
+        lastError = e;
     }
 
     try {
@@ -393,7 +382,13 @@ async function stopChildOrThrow(child) {
         throw new Error(`failed to SIGKILL child: ${e && e.message ? e.message : String(e)}`);
     }
 
-    await waitForExitOrThrow(child, 10000);
+    try {
+        await waitForExitOrThrow(child, 10000);
+    } catch (e) {
+        const le = lastError && lastError.message ? lastError.message : String(lastError);
+        const ce = e && e.message ? e.message : String(e);
+        throw new Error(`child did not exit after SIGTERM then SIGKILL: first=${le} final=${ce}`);
+    }
 }
 
 function spawnElectronStartOrThrow() {

@@ -141,6 +141,15 @@ Additional note:
 
 Goal: Test **Gun functionality** separately from Tor connectivity, so failures are attributable.
 
+### 2.0 Gun (Local-first sanity)
+
+These are the current default “local-first” Gun health checks:
+
+- Electron: [src/__e2e_tests__/gunLocalElectron.js](src/__e2e_tests__/gunLocalElectron.js)
+- React Native: [src/__e2e_tests__/gunLocalReactNative.js](src/__e2e_tests__/gunLocalReactNative.js)
+
+They verify basic `put` + `once` behavior in each environment without involving Tor.
+
 ### 2.1 Gun (Electron local HTTP/WS)
 
 - File: [src/__e2e_tests__/torGunHosting.js](src/__e2e_tests__/torGunHosting.js)
@@ -168,5 +177,5 @@ If you enable these tests, keep [src/__e2e_tests__/duoAlign.js](src/__e2e_tests_
 
 ## Current Development Note
 
-Tor tests may be temporarily commented out while stabilizing the Duo alignment layer.
+Tor tests may be temporarily commented out in the default Moniker run order while stabilizing the local-first Gun layer.
 Check the current test list in [src/init/panels/MonikerPanel.js](src/init/panels/MonikerPanel.js).

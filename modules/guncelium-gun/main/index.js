@@ -64,6 +64,9 @@ function resolveStoreDirOrThrow(electronApp, opts) {
 function createGunMainControllerOrThrow({ electronApp }) {
     requireObject(electronApp, 'electronApp');
 
+    // eslint-disable-next-line global-require
+    const { createGunSqliteStoreOrThrow } = require('./sqliteGunStore');
+
     // NOTE: Gun is an app dependency under this package.
     // eslint-disable-next-line global-require
     const Gun = require('gun/lib/server.js');
@@ -75,6 +78,7 @@ function createGunMainControllerOrThrow({ electronApp }) {
         port: null,
         gun: null,
         storeDir: null,
+        store: null,
         sockets: new Set(),
     };
 
@@ -141,6 +145,9 @@ function createGunMainControllerOrThrow({ electronApp }) {
         const storeDir = resolveStoreDirOrThrow(electronApp, o);
         const peers = Array.isArray(o.peers) ? o.peers : [];
 
+        const storeDbPath = path.join(storeDir, 'gun.sqlite3');
+        const store = createGunSqliteStoreOrThrow(storeDbPath);
+
         const server = http.createServer((req, res) => res.end('gun'));
         state.sockets = new Set();
         server.on('connection', (socket) => {
@@ -154,7 +161,7 @@ function createGunMainControllerOrThrow({ electronApp }) {
         if (!addr || typeof addr !== 'object' || !addr.port) throw new Error('gun server missing bound port');
 
         const port = addr.port;
-        const gun = Gun({ web: server, peers, file: storeDir });
+        const gun = Gun({ web: server, peers, localStorage: false, store });
         const gunType = typeof gun;
         if (!gun || (gunType !== 'function' && gunType !== 'object')) throw new Error('gun initialization failed');
         if (typeof gun.get !== 'function') throw new Error('gun initialization failed (missing get)');
@@ -163,6 +170,7 @@ function createGunMainControllerOrThrow({ electronApp }) {
         state.port = port;
         state.gun = gun;
         state.storeDir = storeDir;
+        state.store = store;
 
         return { ok: true, running: true, port, storeDir };
     }
@@ -175,6 +183,8 @@ function createGunMainControllerOrThrow({ electronApp }) {
         state.port = null;
         state.gun = null;
         state.storeDir = null;
+        if (state.store && typeof state.store.close === 'function') state.store.close();
+        state.store = null;
         state.sockets = new Set();
         return { ok: true, running: false };
     }
@@ -331,13 +341,16 @@ function createGunTcpMeshControllerOrThrow({ electronApp }) {
     requireObject(electronApp, 'electronApp');
 
     // eslint-disable-next-line global-require
+    const { createGunSqliteStoreOrThrow } = require('./sqliteGunStore');
+
+    // eslint-disable-next-line global-require
     const Gun = require('gun/gun');
     // eslint-disable-next-line global-require
     require('gun/lib/wire');
     // eslint-disable-next-line global-require
     require('gun/sea');
 
-    const state = { server: null, port: null, gun: null, storeDir: null, socket: null, peerId: null };
+    const state = { server: null, port: null, gun: null, storeDir: null, store: null, socket: null, peerId: null };
 
     function requireTimeoutMs(value, name) {
         if (value === undefined || value === null) return 5000;
@@ -413,6 +426,9 @@ function createGunTcpMeshControllerOrThrow({ electronApp }) {
         const peerId = (o.peerId === undefined || o.peerId === null) ? randomIdOrThrow('tcp-peer') : String(o.peerId);
         requireString(peerId, 'opts.peerId');
 
+        const storeDbPath = path.join(storeDir, 'gun-tcp.sqlite3');
+        const store = createGunSqliteStoreOrThrow(storeDbPath);
+
         const socket = createSocketAdapterOrThrow(net, {
             handshakeTimeoutMs: 60000,
             enableHello: true,
@@ -420,12 +436,13 @@ function createGunTcpMeshControllerOrThrow({ electronApp }) {
             helloTimeoutMs: 5000,
         });
 
-        const gun = Gun({ file: storeDir, peers: [] });
+        const gun = Gun({ peers: [], localStorage: false, store });
         if (!gun) throw new Error('gun initialization failed');
         if (typeof gun.get !== 'function') throw new Error('gun initialization failed (missing get)');
 
         state.gun = gun;
         state.storeDir = storeDir;
+        state.store = store;
 
         const mesh = requireGunMeshOrThrow(gun);
         installMeshWireOrThrow(mesh, socket);
@@ -468,6 +485,8 @@ function createGunTcpMeshControllerOrThrow({ electronApp }) {
         state.port = null;
         state.gun = null;
         state.storeDir = null;
+        if (state.store && typeof state.store.close === 'function') state.store.close();
+        state.store = null;
         state.socket = null;
         state.peerId = null;
         return { ok: true, running: false };

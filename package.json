@@ -23,6 +23,7 @@
     "expo-crypto": "~15.0.8",
     "expo-electron": "github:bmatusiak/expo-electron",
     "expo-file-system": "~19.0.15",
+    "expo-sqlite": "~16.0.9",
     "expo-status-bar": "~3.0.9",
     "guncelium-gun": "file:modules/guncelium-gun",
     "guncelium-protocal": "file:modules/guncelium-protocal",
