@@ -40,6 +40,22 @@ Types:
 - `2` = HEARTBEAT (empty payload)
 - `3` = MESSAGE (JSON payload)
 
+### Optional HELLO handshake (double-connect avoidance)
+
+When `enableHello: true` is set in `createSocketAdapterOrThrow`, the adapter performs a small pre-data handshake:
+
+- Each side sends `{ "__guncelium": "hello", "peerId": "..." }` as a MESSAGE frame.
+- No application (Gun) messages are delivered until HELLO completes.
+- A deterministic tie-break closes one of the two simultaneous cross-dial connections.
+
+This is enabled by the Gun TCP transports in this repo so only one wire survives when two peers dial each other at the same time.
+
+Design notes:
+
+- **Recommended `peerId`:** use the peer's *currently hosted random onion hostname* (v3 host, without the `.onion` suffix). This makes the ID both globally unique and useful for skipping self-dials.
+- **Tie-break rule (deterministic):** if both peers cross-dial at once, the connection whose *initiator* peerId is lexicographically greatest survives; the other side closes with `code: 'GUNCELIUM_DOUBLE_CONNECT'`.
+- **Fail-fast:** if `peerId` matches the remote `peerId`, the adapter closes with `code: 'GUNCELIUM_SELF_CONNECT'`.
+
 ## Onion detection rules
 
 The socket adapter treats a destination as an onion service when the host matches:

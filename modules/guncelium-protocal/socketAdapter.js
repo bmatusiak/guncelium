@@ -113,6 +113,9 @@ const DEFAULT_CONFIG = Object.freeze({
     socksHost: '127.0.0.1',
     socksPort: 9050,
     handshakeTimeoutMs: 10000,
+    enableHello: false,
+    peerId: null,
+    helloTimeoutMs: 1500,
 });
 
 function normalizeConfigOrThrow(cfg) {
@@ -126,6 +129,9 @@ function normalizeConfigOrThrow(cfg) {
     const socksHost = (c.socksHost === undefined) ? DEFAULT_CONFIG.socksHost : String(c.socksHost);
     const socksPort = (c.socksPort === undefined) ? DEFAULT_CONFIG.socksPort : requirePort(c.socksPort, 'socksPort');
     const handshakeTimeoutMs = (c.handshakeTimeoutMs === undefined) ? DEFAULT_CONFIG.handshakeTimeoutMs : Number(c.handshakeTimeoutMs);
+    const enableHello = (c.enableHello === undefined) ? DEFAULT_CONFIG.enableHello : c.enableHello;
+    const peerId = (c.peerId === undefined) ? DEFAULT_CONFIG.peerId : c.peerId;
+    const helloTimeoutMs = (c.helloTimeoutMs === undefined) ? DEFAULT_CONFIG.helloTimeoutMs : Number(c.helloTimeoutMs);
 
     if (!Number.isFinite(heartbeatIntervalMs) || heartbeatIntervalMs <= 0) throw new Error('heartbeatIntervalMs must be positive');
     if (!Number.isFinite(idleTimeoutMs) || idleTimeoutMs <= 0) throw new Error('idleTimeoutMs must be positive');
@@ -136,6 +142,12 @@ function normalizeConfigOrThrow(cfg) {
     requireString(socksHost, 'socksHost');
     if (!Number.isFinite(handshakeTimeoutMs) || handshakeTimeoutMs <= 0) throw new Error('handshakeTimeoutMs must be positive');
 
+    requireBoolean(enableHello, 'enableHello');
+    if (enableHello) {
+        requireString(peerId, 'peerId');
+        if (!Number.isFinite(helloTimeoutMs) || helloTimeoutMs <= 0) throw new Error('helloTimeoutMs must be positive');
+    }
+
     return {
         heartbeatIntervalMs,
         idleTimeoutMs,
@@ -145,6 +157,9 @@ function normalizeConfigOrThrow(cfg) {
         socksHost,
         socksPort,
         handshakeTimeoutMs,
+        enableHello,
+        peerId: enableHello ? String(peerId) : null,
+        helloTimeoutMs,
     };
 }
 
@@ -169,6 +184,12 @@ function createSocketAdapterOrThrow(lib, cfg) {
         let bufferedAmount = 0;
         let pulse = null;
 
+        const wantsHello = config.enableHello === true;
+        const localPeerId = wantsHello ? config.peerId : null;
+        let helloDone = !wantsHello;
+        let remotePeerId = null;
+        let helloTimer = null;
+
         const api = {
             readyState,
             bufferedAmount,
@@ -184,6 +205,13 @@ function createSocketAdapterOrThrow(lib, cfg) {
             if (api.onerror) api.onerror(err);
         }
 
+        function clearHelloTimer() {
+            if (helloTimer) {
+                clearTimeout(helloTimer);
+                helloTimer = null;
+            }
+        }
+
         function doClose() {
             if (readyState === 3) return;
             readyState = 3;
@@ -192,6 +220,7 @@ function createSocketAdapterOrThrow(lib, cfg) {
                 clearInterval(pulse);
                 pulse = null;
             }
+            clearHelloTimer();
             try {
                 destroyFn.call(raw);
             } catch (e) {
@@ -215,6 +244,51 @@ function createSocketAdapterOrThrow(lib, cfg) {
             out.set(header, 0);
             out.set(payload, header.length);
             return out;
+        }
+
+        function sendHelloOrThrow() {
+            if (!wantsHello) return;
+            if (!localPeerId) throw new Error('hello enabled but local peerId missing');
+            const payload = encoder.encode(JSON.stringify({ __guncelium: 'hello', peerId: localPeerId }));
+            writeRawOrThrow(encodeFrameOrThrow(payload, TYPES.MESSAGE));
+        }
+
+        function isOutboundOrThrow() {
+            if (!wantsHello) return false;
+            if (!options || typeof options !== 'object') throw new Error('options must be provided when hello enabled');
+            const d = options.direction;
+            if (d !== 'outbound' && d !== 'inbound') throw new Error('options.direction must be outbound|inbound');
+            return d === 'outbound';
+        }
+
+        function maybeCompleteHelloOrThrow() {
+            if (!wantsHello) return;
+            if (helloDone) return;
+            if (!localPeerId) throw new Error('localPeerId missing');
+            if (!remotePeerId) return;
+
+            if (remotePeerId === localPeerId) {
+                const err = new Error('self-connect is not allowed');
+                err.code = 'GUNCELIUM_SELF_CONNECT';
+                emitError(err);
+                doClose();
+                return;
+            }
+
+            const outbound = isOutboundOrThrow();
+            const initiatorId = outbound ? localPeerId : remotePeerId;
+            const maxId = (localPeerId > remotePeerId) ? localPeerId : remotePeerId;
+            if (initiatorId !== maxId) {
+                const err = new Error('double-connect closed by deterministic tie-break');
+                err.code = 'GUNCELIUM_DOUBLE_CONNECT';
+                emitError(err);
+                doClose();
+                return;
+            }
+
+            helloDone = true;
+            clearHelloTimer();
+            if (api.onopen) api.onopen();
         }
 
         function sendOrThrow(data) {
@@ -260,6 +334,23 @@ function createSocketAdapterOrThrow(lib, cfg) {
                     } catch (e) {
                         throw new Error('invalid JSON payload');
                     }
+
+                    if (wantsHello && !helloDone) {
+                        if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+                            throw new Error('expected hello object before data frames');
+                        }
+                        if (obj.__guncelium !== 'hello') {
+                            throw new Error('expected hello object before data frames');
+                        }
+                        if (typeof obj.peerId !== 'string' || obj.peerId.trim().length === 0) {
+                            throw new Error('hello.peerId must be a non-empty string');
+                        }
+                        remotePeerId = String(obj.peerId);
+                        maybeCompleteHelloOrThrow();
+                        offset = end;
+                        continue;
+                    }
+
                     if (api.onmessage) {
                         // Gun's mesh batches messages as JSON arrays in a single string like: "[ {...},{...} ]".
                         // If we emit it as an actual Array, mesh.hear() will not treat it as a batch.
@@ -318,9 +409,20 @@ function createSocketAdapterOrThrow(lib, cfg) {
                 doClose();
             });
 
-            setTimeout(() => {
-                if (api.onopen) api.onopen();
-            }, 0);
+            if (wantsHello) {
+                helloTimer = setTimeout(() => {
+                    const err = new Error('HELLO handshake timeout');
+                    err.code = 'GUNCELIUM_HELLO_TIMEOUT';
+                    emitError(err);
+                    doClose();
+                }, config.helloTimeoutMs);
+                sendHelloOrThrow();
+                // api.onopen will fire only after HELLO completes.
+            } else {
+                setTimeout(() => {
+                    if (api.onopen) api.onopen();
+                }, 0);
+            }
         }
 
         function socks5HandshakeOrThrow(onion, port) {
@@ -441,9 +543,12 @@ function createSocketAdapterOrThrow(lib, cfg) {
         return new Promise((resolve, reject) => {
             const raw = lib.createConnection(rawOptions, () => {
                 try {
-                    const wrapped = wrapRawSocketOrThrow(raw, isOnion ? { onion: onionHost, port: p } : {});
+                    const wrapped = wrapRawSocketOrThrow(raw, isOnion
+                        ? { onion: onionHost, port: p, direction: 'outbound' }
+                        : { direction: 'outbound' });
                     wrapped.onerror = (err) => reject(err);
                     wrapped.onopen = () => resolve(wrapped);
+                    wrapped.onclose = () => reject(new Error('socket closed before open'));
                 } catch (e) {
                     reject(e);
                 }
@@ -463,7 +568,7 @@ function createSocketAdapterOrThrow(lib, cfg) {
         }
 
         const server = lib.createServer((rawSocket) => {
-            const peer = wrapRawSocketOrThrow(rawSocket, {});
+            const peer = wrapRawSocketOrThrow(rawSocket, { direction: 'inbound' });
             if (onConnection) onConnection(peer);
         });
         requireObject(server, 'server');

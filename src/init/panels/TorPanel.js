@@ -19,7 +19,7 @@ function normalizeInfo(info) {
     };
 }
 
-export default function TorPanel({ tor, gunTcpPort }) {
+export default function TorPanel({ tor, gun }) {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
     const [info, setInfo] = useState(null);
@@ -189,12 +189,26 @@ export default function TorPanel({ tor, gunTcpPort }) {
         setLastResult(null);
         try {
             if (!canUse.ok) throw new Error(canUse.reason || 'tor unavailable');
-            if (!gunTcpPort) throw new Error('gun tcp must be running to attach a hidden service');
+            if (!gun || typeof gun !== 'object') throw new Error('gun service not available');
+            if (typeof gun.tcpStart !== 'function') throw new Error('gun.tcpStart not available');
+            if (typeof gun.tcpStatus !== 'function') throw new Error('gun.tcpStatus not available');
+            if (typeof gun.tcpStop !== 'function') throw new Error('gun.tcpStop not available');
             if (!tor.hiddenServices || typeof tor.hiddenServices !== 'object') throw new Error('tor.hiddenServices not available');
             if (typeof tor.hiddenServices.create !== 'function') throw new Error('tor.hiddenServices.create not available');
 
+            // eslint-disable-next-line global-require
+            const { generateV3OnionVanity } = require('guncelium-tor/onion');
+            if (typeof generateV3OnionVanity !== 'function') throw new Error('guncelium-tor/onion.generateV3OnionVanity not available');
+
             // eslint-disable-next-line no-console
-            console.log(`[ui][tor] restart with gun tcp hidden service ${jsonForLogOrThrow({ gunTcpPort: Number(gunTcpPort) })}`);
+            console.log('[ui][tor] restart with gun tcp hidden service (generate random onion id)');
+
+            // Generate the random onion identity BEFORE starting Tor, and use it as the peerId.
+            // Deterministic bound: maxAttempts=1 always succeeds for non-vanity generation.
+            const randomKey = generateV3OnionVanity({ prefix: null, maxAttempts: 1 });
+            if (!randomKey || typeof randomKey !== 'object') throw new Error('generateV3OnionVanity returned non-object');
+            if (!randomKey.onion) throw new Error('random onion missing');
+            const peerId = String(randomKey.onion);
 
             // Stop Tor if it is running; if it isn't, fail-fast behavior is handled by tor.stop.
             let infoR = (tor.info && typeof tor.info === 'function') ? await tor.info() : await tor.status();
@@ -202,12 +216,33 @@ export default function TorPanel({ tor, gunTcpPort }) {
                 await tor.stop();
             }
 
+            // Restart Gun TCP with peerId so HELLO tie-break and self-connect exclusion are onion-stable.
+            const tcpSt = await gun.tcpStatus();
+            if (tcpSt && tcpSt.running === true) {
+                await gun.tcpStop();
+            }
+            await gun.tcpStart({ port: 0, host: '127.0.0.1', peerId });
+            const startedTcp = await gun.tcpStatus();
+            if (!startedTcp || startedTcp.running !== true) throw new Error('gun tcp did not start');
+            if (!startedTcp.port) throw new Error('gun tcp missing port');
+
+            // eslint-disable-next-line no-console
+            console.log(`[ui][tor] configure HS for gun tcp ${jsonForLogOrThrow({ gunTcpPort: Number(startedTcp.port), peerId })}`);
+
+            const bootstrapKeys = pickGunTorHostingKeysOrThrow({ bootstrapCount: 1, includeRandom: false });
+            const keys = bootstrapKeys.concat([{
+                onion: String(randomKey.onion),
+                seed_hex: String(randomKey.seed_hex),
+                pub_hex: String(randomKey.pub_hex),
+                generate: false,
+            }]);
+
             const created = await tor.hiddenServices.create({
-                port: Number(gunTcpPort),
+                port: Number(startedTcp.port),
                 virtualPort: 8888,
                 service: 'gun-tcp',
                 controlPort: true,
-                keys: pickGunTorHostingKeysOrThrow({ bootstrapCount: 1, includeRandom: true, maxAttempts: DEFAULT_GUN_KEY_MAX_ATTEMPTS }),
+                keys,
             });
 
             // eslint-disable-next-line no-console
@@ -218,6 +253,8 @@ export default function TorPanel({ tor, gunTcpPort }) {
             console.log(`[ui][tor] tor start after hs result ${jsonForLogOrThrow(started)}`);
             setLastResult({
                 ok: true,
+                peerId,
+                gunTcp: startedTcp,
                 hiddenServicesCreate: created,
                 torStart: started,
             });
@@ -233,7 +270,7 @@ export default function TorPanel({ tor, gunTcpPort }) {
         } finally {
             setBusy(false);
         }
-    }, [canUse.ok, canUse.reason, gunTcpPort, tor]);
+    }, [canUse.ok, canUse.reason, gun, tor]);
 
     return (
         <View style={{ padding: 12, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, marginBottom: 12 }}>
@@ -252,7 +289,7 @@ export default function TorPanel({ tor, gunTcpPort }) {
 
             <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
                 <Button title="HS Status" onPress={refreshHiddenServices} disabled={!canUse.ok || busy} />
-                <Button title="Restart w/ Gun TCP HS" onPress={restartWithGunTcpHiddenService} disabled={!canUse.ok || busy || !gunTcpPort} />
+                <Button title="Restart w/ Gun TCP HS" onPress={restartWithGunTcpHiddenService} disabled={!canUse.ok || busy || !(gun && typeof gun.tcpStart === 'function')} />
             </View>
 
             {error ? <Text style={{ color: '#a00' }}>Error: {error}</Text> : null}

@@ -55,6 +55,22 @@ The handshake is bounded:
 - A hard timeout (`handshakeTimeoutMs`, default 10s)
 - A small handshake buffer cap (512 bytes)
 
+## Optional HELLO handshake (double-connect + self-connect avoidance)
+
+In real meshes, two peers often discover each other simultaneously and both dial outbound at the same time. Without an identity exchange, you can end up with **two parallel wires** for the same peer-to-peer relationship.
+
+The canonical adapter supports an optional HELLO handshake:
+
+- Enable with `createSocketAdapterOrThrow(lib, { enableHello: true, peerId: '<string>', helloTimeoutMs: 2000 })`
+- Each side sends `{ "__guncelium": "hello", "peerId": "..." }` as the first MESSAGE frame.
+- No Gun messages are delivered until HELLO completes.
+- The adapter uses a deterministic tie-break to close one of the two wires if both peers cross-dial.
+
+Recommended `peerId`:
+
+- Use the peer's currently-hosted **random v3 onion hostname** (without `.onion`).
+- This makes the peerId stable for the session, and also allows proactively skipping any dial where the destination host equals `peerId`.
+
 ## Runtime requirements
 
 Your platform must provide:

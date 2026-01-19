@@ -74,6 +74,18 @@ The Control Plane handles peer-to-peer discovery and identity verification.
 * **Self-Sovereign Identity:** Nodes use **Onion Addresses** as globally unique, location-independent identifiers (URIs) that bypass DNS.
 * **Agnostic Signaling:** Tor acts as a secure, firewall-agnostic channel for the WebRTC handshake, ensuring signaling packets reach their destination regardless of local network restrictions.
 
+#### 3.1.2 Implementation note (this repo): onion address as transport `peerId`
+
+In the current Guncelium implementation, the **random Tor v3 onion identity generated before starting Tor** is treated as the node’s *transport-level ID* for the TCP mesh:
+
+- The framed TCP transport performs a small pre-data **HELLO handshake** that exchanges a `peerId`.
+- `peerId` is set to the random onion hostname (v3 host, without the `.onion` suffix).
+- This single choice solves two practical problems:
+	- **Double-connect avoidance:** if two peers discover each other and both dial simultaneously, a deterministic tie-break closes one of the two wires.
+	- **Self-connect avoidance:** the node can skip dialing any target whose host equals its own `peerId`.
+
+This is a transport concern (wire management) and is intentionally separate from application-layer identity (Gun SEA).
+
 
 #### 3.1.1 Bootstrap Onion (Rendezvous) and Trust Model
 

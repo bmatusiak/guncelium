@@ -123,7 +123,8 @@ Intended behavior:
   - 1 freshly generated key (for additional anonymity)
 - When dialing peers, attempt connections to the pool identities (excluding “the one we are currently hosting on”).
 
-This alone does **not** prevent double-connecting (both sides dialing each other simultaneously). We’ll handle that at the protocol/session layer.
+Update: double-connect avoidance is implemented at the transport layer via an optional HELLO handshake in `guncelium-protocal`.
+The recommended `peerId` for that handshake is the **random onion identity** that is generated before starting Tor (so the ID is stable and also usable for self-connect exclusion).
 
 ### Bootstrap key pool (5x `gun*` v3 vanity)
 

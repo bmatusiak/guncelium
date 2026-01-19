@@ -177,6 +177,7 @@ What it does (high level):
 - Starts Gun TCP on `127.0.0.1` with a random port
 - Ensures Tor is installed (installs if missing)
 - Creates a v3 hidden service mapping `virtualPort: 8888` → the Gun TCP port
+- Uses the freshly generated random onion identity as the TCP transport `peerId` (HELLO handshake) so double-connect/self-connect are handled deterministically
 - Starts Tor (non-destructive: `cleanSlate: false`)
 - Waits (bounded) for an onion hostname and prints `<hostname>.onion`
 - Stops Tor and Gun at the end (or on failure)

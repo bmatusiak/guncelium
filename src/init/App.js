@@ -74,7 +74,7 @@ export default function App() {
       <Text style={{ fontSize: 22, fontWeight: '700', marginBottom: 6 }}>guncelium</Text>
       <Text style={{ color: '#555', marginBottom: 12 }}>env: {envLabel}</Text>
 
-      <TorPanel tor={tor} gunTcpPort={gunTcpStatus && gunTcpStatus.running ? gunTcpStatus.port : null} />
+      <TorPanel tor={tor} gun={gun} />
       <GunPanel gun={gun} gunClient={gunClient} onStatus={setGunStatus} onTcpStatus={setGunTcpStatus} />
       <MonikerPanel moniker={moniker} />
 

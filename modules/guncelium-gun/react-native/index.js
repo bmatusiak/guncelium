@@ -46,6 +46,11 @@ function parseTcpPeerOrThrow(s) {
     return { host, port, url: `tcp://${host}:${port}` };
 }
 
+function stripOnionSuffix(s) {
+    const raw = String(s || '').trim();
+    return raw.toLowerCase().endsWith('.onion') ? raw.slice(0, -6) : raw;
+}
+
 function createPeerIdOrThrow(prefix, n) {
     requireString(prefix, 'prefix');
     const i = requireInteger(n, 'n');
@@ -90,6 +95,10 @@ function crashAsyncOrThrow(e) {
     const err = (e instanceof Error) ? e : new Error(String(e));
     setTimeout(() => { throw err; }, 0);
     throw err;
+}
+
+function isDoubleConnectError(e) {
+    return !!(e && typeof e === 'object' && e.code === 'GUNCELIUM_DOUBLE_CONNECT');
 }
 
 async function waitForServerListeningOrThrow(server) {
@@ -234,6 +243,8 @@ function createGunReactNativeApiOrThrow() {
         requireString(host, 'opts.host');
         const socksPort = (o.socksPort === undefined || o.socksPort === null) ? 8765 : requirePort(o.socksPort, 'opts.socksPort');
         const peers = normalizePeersOrThrow(o.peers);
+        const peerId = (o.peerId === undefined || o.peerId === null) ? createPeerIdOrThrow('tcp-peer', 1) : String(o.peerId);
+        requireString(peerId, 'opts.peerId');
 
         // eslint-disable-next-line global-require
         const TcpSocket = require('react-native-tcp-socket');
@@ -244,7 +255,13 @@ function createGunReactNativeApiOrThrow() {
         const { createSocketAdapterOrThrow } = require('guncelium-protocal');
         if (typeof createSocketAdapterOrThrow !== 'function') throw new Error('guncelium-protocal.createSocketAdapterOrThrow is required');
 
-        const socket = createSocketAdapterOrThrow(TcpSocket, { socksHost: '127.0.0.1', socksPort });
+        const socket = createSocketAdapterOrThrow(TcpSocket, {
+            socksHost: '127.0.0.1',
+            socksPort,
+            enableHello: true,
+            peerId,
+            helloTimeoutMs: 2000,
+        });
 
         const gun = Gun({ peers: [], localStorage: false });
         requireObjectLike(gun, 'gun');
@@ -264,6 +281,7 @@ function createGunReactNativeApiOrThrow() {
             socket.connect(parsed.host, parsed.port).then((wire) => {
                 attachWireToPeerOrThrow(mesh, peer, wire);
             }).catch((e) => {
+                if (isDoubleConnectError(e)) return;
                 crashAsyncOrThrow(e);
             });
         };
@@ -285,6 +303,11 @@ function createGunReactNativeApiOrThrow() {
 
         for (let i = 0; i < peers.length; i++) {
             const t = parseTcpPeerOrThrow(peers[i]);
+            if (peerId) {
+                const local = stripOnionSuffix(peerId);
+                const remote = stripOnionSuffix(t.host);
+                if (local && remote && local === remote) continue;
+            }
             mesh.hi({ url: t.url, id: t.url });
         }
 
@@ -293,8 +316,9 @@ function createGunReactNativeApiOrThrow() {
         state.tcp.gun = gun;
         state.tcp.peers = peers;
         state.tcp.socksPort = socksPort;
+        state.tcp.peerId = peerId;
 
-        return { ok: true, running: true, port: boundPort, host, peers, socksPort };
+        return { ok: true, running: true, port: boundPort, host, peers, socksPort, peerId };
     }
 
     async function tcpStop() {
@@ -318,6 +342,7 @@ function createGunReactNativeApiOrThrow() {
             port: state.tcp.port,
             peers: state.tcp.peers,
             socksPort: state.tcp.socksPort,
+            peerId: state.tcp.peerId || null,
             mode: 'react-native',
         };
     }

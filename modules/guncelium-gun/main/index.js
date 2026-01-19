@@ -225,6 +225,11 @@ function parseHostPortOrThrow(s) {
     return { host, port, url: `tcp://${host}:${port}` };
 }
 
+function stripOnionSuffix(s) {
+    const raw = String(s || '').trim();
+    return raw.toLowerCase().endsWith('.onion') ? raw.slice(0, -6) : raw;
+}
+
 function randomIdOrThrow(prefix) {
     requireString(prefix, 'prefix');
     const buf = crypto.randomBytes(8);
@@ -236,6 +241,10 @@ function crashAsyncOrThrow(e) {
     const err = (e instanceof Error) ? e : new Error(String(e));
     setTimeout(() => { throw err; }, 0);
     throw err;
+}
+
+function isDoubleConnectError(e) {
+    return !!(e && typeof e === 'object' && e.code === 'GUNCELIUM_DOUBLE_CONNECT');
 }
 
 async function waitForServerListeningOrThrow(server) {
@@ -306,6 +315,7 @@ function installMeshWireOrThrow(mesh, socket) {
         socket.connect(host, port).then((wire) => {
             attachWireToPeerOrThrow(mesh, peer, wire);
         }).catch((e) => {
+            if (isDoubleConnectError(e)) return;
             crashAsyncOrThrow(e);
         });
     };
@@ -321,9 +331,7 @@ function createGunTcpMeshControllerOrThrow({ electronApp }) {
     // eslint-disable-next-line global-require
     require('gun/sea');
 
-    const socket = createSocketAdapterOrThrow(net, {});
-
-    const state = { server: null, port: null, gun: null, storeDir: null };
+    const state = { server: null, port: null, gun: null, storeDir: null, socket: null, peerId: null };
 
     async function startTcp(opts) {
         if (state.server) throw new Error('gun tcp already running');
@@ -335,6 +343,10 @@ function createGunTcpMeshControllerOrThrow({ electronApp }) {
 
         const storeDir = resolveStoreDirOrThrow(electronApp, o);
         const peers = normalizePeerTargetsOrThrow(o.peers);
+        const peerId = (o.peerId === undefined || o.peerId === null) ? randomIdOrThrow('tcp-peer') : String(o.peerId);
+        requireString(peerId, 'opts.peerId');
+
+        const socket = createSocketAdapterOrThrow(net, { enableHello: true, peerId, helloTimeoutMs: 2000 });
 
         const gun = Gun({ file: storeDir, peers: [] });
         if (!gun) throw new Error('gun initialization failed');
@@ -358,13 +370,20 @@ function createGunTcpMeshControllerOrThrow({ electronApp }) {
 
         state.server = server;
         state.port = addr.port;
+        state.socket = socket;
+        state.peerId = peerId;
 
         for (let i = 0; i < peers.length; i++) {
             const t = parseHostPortOrThrow(peers[i]);
+            if (peerId) {
+                const local = stripOnionSuffix(peerId);
+                const remote = stripOnionSuffix(t.host);
+                if (local && remote && local === remote) continue;
+            }
             mesh.hi({ url: t.url, id: t.url });
         }
 
-        return { ok: true, running: true, port: state.port, host, storeDir };
+        return { ok: true, running: true, port: state.port, host, storeDir, peerId };
     }
 
     async function stopTcp() {
@@ -377,6 +396,8 @@ function createGunTcpMeshControllerOrThrow({ electronApp }) {
         state.port = null;
         state.gun = null;
         state.storeDir = null;
+        state.socket = null;
+        state.peerId = null;
         return { ok: true, running: false };
     }
 
@@ -386,6 +407,7 @@ function createGunTcpMeshControllerOrThrow({ electronApp }) {
             running: !!state.server,
             port: state.port,
             storeDir: state.storeDir,
+            peerId: state.peerId,
         };
     }
 
