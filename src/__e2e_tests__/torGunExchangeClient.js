@@ -105,6 +105,57 @@ function parseExchangeDeepLinkOrNull(url) {
     return { host, portStr, runId };
 }
 
+function isDuoDeepLinkOrNull(url) {
+    if (!url) return null;
+    const s = String(url).trim();
+    if (!s.toLowerCase().startsWith('guncelium://')) return null;
+    const withoutScheme = s.slice('guncelium://'.length);
+    const parts = withoutScheme.split('/').filter(Boolean);
+    if (parts.length !== 3) return null;
+    if (String(parts[0]).toLowerCase() !== 'e2e') return null;
+    if (String(parts[1]) !== 'duo') return null;
+    if (String(parts[2]) !== 'v1') return null;
+    return { ok: true };
+}
+
+async function connectDuoCoordinatorOrThrow() {
+    // eslint-disable-next-line global-require
+    const { io } = require('socket.io-client');
+    if (typeof io !== 'function') throw new Error('socket.io-client.io is required');
+
+    const url = 'http://127.0.0.1:45820';
+
+    return await new Promise((resolve, reject) => {
+        let settled = false;
+        const socket = io(url, {
+            transports: ['websocket', 'polling'],
+            timeout: 8000,
+        });
+
+        const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            try { socket.close(); } catch (_e) { }
+            reject(new Error('duo coordinator connect timeout'));
+        }, 8000);
+
+        socket.on('connect', () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            resolve(socket);
+        });
+
+        socket.on('connect_error', (e) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            try { socket.close(); } catch (_e) { }
+            reject(e instanceof Error ? e : new Error(String(e)));
+        });
+    });
+}
+
 function requireOnionHostnameWithSuffix(value) {
     const s = String(value || '').trim().toLowerCase();
     if (!/^[a-z2-7]{56}\.onion$/.test(s)) throw new Error(`expected v3 onion hostname with .onion, got: ${s}`);
@@ -195,14 +246,8 @@ export default {
                 ).catch(() => null);
 
                 if (!url) return;
-                const parsed = parseExchangeDeepLinkOrNull(url);
-                if (!parsed) return;
-
-                const onionHost = requireOnionHostnameWithSuffix(parsed.host);
-                const port = requirePositiveInt(parsed.portStr, 'port', 65535);
-                assert.equal(port, 8888, 'expected exchange virtual port 8888');
-                requireString(parsed.runId, 'run');
-                const runId = String(parsed.runId).trim();
+                const duo = isDuoDeepLinkOrNull(url);
+                if (!duo) return;
 
                 const gun = await waitForServiceOrThrow('gun');
                 const tor = await waitForServiceOrThrow('tor');
@@ -212,6 +257,42 @@ export default {
                 let tcpRunning = false;
                 let torRunning = false;
                 let server = null;
+
+                let coord = null;
+                let onionHost = null;
+                let runId = null;
+                const port = 8888;
+
+                log('connecting to duo coordinator...');
+                coord = await connectDuoCoordinatorOrThrow();
+
+                let paramsResolve = null;
+                const paramsPromise = new Promise((resolve) => {
+                    paramsResolve = resolve;
+                });
+                if (typeof paramsResolve !== 'function') throw new Error('paramsPromise resolver missing');
+                coord.on('exchangeParams', (p) => paramsResolve(p));
+
+                const registerAck = await new Promise((resolve, reject) => {
+                    coord.emit('register', { role: 'android' }, (ack) => {
+                        if (!ack || ack.ok !== true) return reject(new Error(`duo register failed: ${ack && ack.error ? ack.error : 'unknown'}`));
+                        return resolve(ack);
+                    });
+                });
+
+                if (registerAck && registerAck.exchangeParams) paramsResolve(registerAck.exchangeParams);
+
+                log('waiting for exchange params from Electron...');
+                const params = await Promise.race([
+                    paramsPromise,
+                    sleepMsOrThrow(120000).then(() => { throw new Error('timeout waiting for exchangeParams (duo)'); }),
+                ]);
+
+                requireObject(params, 'exchangeParams');
+                onionHost = requireOnionHostnameWithSuffix(params.onionHost);
+                assert.equal(Number(params.port), port, 'expected exchange port 8888');
+                requireString(params.runId, 'runId');
+                runId = String(params.runId).trim();
 
                 const keyBase = `__e2e__/torGunExchange/${runId}`;
                 const pingKey = `${keyBase}/ping`;
@@ -281,6 +362,14 @@ export default {
                         tcpRunning = true;
                     }
 
+                    log('signaling readiness to Electron (duo coordinator)...');
+                    await new Promise((resolve, reject) => {
+                        coord.emit('androidReady', { ok: true }, (ack) => {
+                            if (!ack || ack.ok !== true) return reject(new Error('androidReady ack failed'));
+                            return resolve();
+                        });
+                    });
+
                     log('sending ping...');
                     {
                         const put = await gun.tcpPut({ key: pingKey, value: pingVal, timeoutMs: 2000 });
@@ -325,6 +414,11 @@ export default {
                         // eslint-disable-next-line no-console
                         console.error('cleanup: server.close failed', closeErr);
                     }
+                    try {
+                        if (coord) coord.close();
+                    } catch (_e3) {
+                        // ignore
+                    }
                     throw e;
                 }
 
@@ -339,6 +433,7 @@ export default {
                     assert.ok(stopped.ok === true, 'tor.stop ok');
                 }
                 if (server) server.close();
+                if (coord) coord.close();
             });
         });
     },

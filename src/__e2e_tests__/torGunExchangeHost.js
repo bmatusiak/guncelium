@@ -208,6 +208,44 @@ function buildAndroidLaunchUrlOrThrow(onionHostNoSuffix, runId) {
     return `guncelium://e2e/torGunExchange/v1/${encHost}/8888/${encRun}`;
 }
 
+async function connectDuoCoordinatorOrThrow() {
+    // eslint-disable-next-line global-require
+    const { io } = require('socket.io-client');
+    if (typeof io !== 'function') throw new Error('socket.io-client.io is required');
+
+    const url = 'http://127.0.0.1:45820';
+
+    return await new Promise((resolve, reject) => {
+        let settled = false;
+        const socket = io(url, {
+            transports: ['websocket', 'polling'],
+            timeout: 8000,
+        });
+
+        const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            try { socket.close(); } catch (_e) { }
+            reject(new Error('duo coordinator connect timeout'));
+        }, 8000);
+
+        socket.on('connect', () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            resolve(socket);
+        });
+
+        socket.on('connect_error', (e) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            try { socket.close(); } catch (_e) { }
+            reject(e instanceof Error ? e : new Error(String(e)));
+        });
+    });
+}
+
 export default {
     name: 'TorGunExchangeHost',
     test: (h) => {
@@ -283,10 +321,39 @@ export default {
                     log('waiting for onion hostname...');
                     await waitForOnionOrThrow(tor, peerId);
 
-                    const androidLaunchUrl = buildAndroidLaunchUrlOrThrow(peerId, runId);
-                    // Duo runner parses this line to launch Android with the correct host+run.
-                    // eslint-disable-next-line no-console
-                    console.log(`[duo] ANDROID_LAUNCH_URL=${androidLaunchUrl}`);
+                    log('publishing exchange params to duo coordinator...');
+                    const coord = await connectDuoCoordinatorOrThrow();
+                    await new Promise((resolve, reject) => {
+                        coord.emit('register', { role: 'electron' }, (ack) => {
+                            if (!ack || ack.ok !== true) return reject(new Error(`duo register failed: ${ack && ack.error ? ack.error : 'unknown'}`));
+                            return resolve();
+                        });
+                    });
+                    await new Promise((resolve, reject) => {
+                        coord.emit('exchangeParams', { onionHost: `${peerId}.onion`, port: 8888, runId }, (ack) => {
+                            if (!ack || ack.ok !== true) return reject(new Error(`duo exchangeParams failed: ${ack && ack.error ? ack.error : 'unknown'}`));
+                            return resolve();
+                        });
+                    });
+
+                    log('waiting for Android readiness via duo coordinator...');
+                    await new Promise((resolve, reject) => {
+                        let done = false;
+                        const timer = setTimeout(() => {
+                            if (done) return;
+                            done = true;
+                            try { coord.close(); } catch (_e) { }
+                            reject(new Error('timeout waiting for androidReady (duo)'));
+                        }, 60000);
+
+                        coord.on('androidReady', () => {
+                            if (done) return;
+                            done = true;
+                            clearTimeout(timer);
+                            try { coord.close(); } catch (_e) { }
+                            resolve();
+                        });
+                    });
 
                     log('waiting for Android ping over Tor...');
                     await waitForOrThrow(

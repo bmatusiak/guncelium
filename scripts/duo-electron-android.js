@@ -9,6 +9,7 @@ const readline = require('node:readline');
 const MAX_WAIT_MS = 6 * 60 * 60 * 1000; // 6 hours (bounded)
 const MAX_ADB_MS = 15000;
 const EXPO_PORT = 8081;
+const DUO_COORD_PORT = 45820;
 
 function requireInt(value, name, min, max) {
     const n = Number(value);
@@ -141,7 +142,7 @@ function adbOpenDeepLinkOrThrow(serial, androidPackage, url) {
 
 function parseReversePortsOrThrow() {
     const raw = process.env.GUNCELIUM_ADB_REVERSE_PORTS;
-    const fallback = [EXPO_PORT];
+    const fallback = [EXPO_PORT, DUO_COORD_PORT];
     if (raw === undefined || raw === null || String(raw).trim().length === 0) return fallback;
 
     const parts = String(raw).split(',').map((s) => s.trim()).filter(Boolean);
@@ -156,6 +157,140 @@ function parseReversePortsOrThrow() {
 
     if (ports.length < 1) throw new Error('no reverse ports after parsing');
     return ports;
+}
+
+function startDuoCoordinatorOrThrow() {
+    // eslint-disable-next-line global-require
+    const http = require('node:http');
+    // eslint-disable-next-line global-require
+    const { Server } = require('socket.io');
+
+    const httpServer = http.createServer();
+    const io = new Server(httpServer, {
+        serveClient: false,
+        cors: { origin: '*' },
+        transports: ['websocket', 'polling'],
+    });
+
+    const state = {
+        electron: null,
+        android: null,
+        exchangeParams: null,
+        aligned: { electron: false, android: false },
+        data: { electron: null, android: null },
+    };
+
+    io.on('connection', (socket) => {
+        socket.on('register', (payload, ack) => {
+            try {
+                if (!payload || typeof payload !== 'object') throw new Error('register payload must be object');
+                const role = String(payload.role || '').trim().toLowerCase();
+                if (role !== 'electron' && role !== 'android') throw new Error('role must be electron|android');
+
+                if (role === 'electron') state.electron = socket;
+                if (role === 'android') state.android = socket;
+
+                if (state.android && state.electron) {
+                    state.electron.emit('peerConnected', { role: 'android' });
+                    state.android.emit('peerConnected', { role: 'electron' });
+                }
+
+                if (role === 'android' && state.exchangeParams) {
+                    state.android.emit('exchangeParams', state.exchangeParams);
+                }
+
+                // Include params in the ack to avoid a race where the event is emitted
+                // before the client has attached its `exchangeParams` listener.
+                const ackPayload = { ok: true, role };
+                if (role === 'android' && state.exchangeParams) {
+                    ackPayload.exchangeParams = state.exchangeParams;
+                }
+
+                if (typeof ack === 'function') ack(ackPayload);
+            } catch (e) {
+                if (typeof ack === 'function') ack({ ok: false, error: e && e.message ? e.message : String(e) });
+            }
+        });
+
+        socket.on('exchangeParams', (payload, ack) => {
+            try {
+                if (!payload || typeof payload !== 'object') throw new Error('exchangeParams payload must be object');
+                const onionHost = String(payload.onionHost || '').trim();
+                const runId = String(payload.runId || '').trim();
+                const port = Number(payload.port);
+                if (!onionHost.toLowerCase().endsWith('.onion')) throw new Error('onionHost must end with .onion');
+                if (!runId) throw new Error('runId required');
+                if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('port must be 1..65535');
+
+                state.exchangeParams = { onionHost, port, runId };
+                if (state.android) state.android.emit('exchangeParams', state.exchangeParams);
+                if (typeof ack === 'function') ack({ ok: true });
+            } catch (e) {
+                if (typeof ack === 'function') ack({ ok: false, error: e && e.message ? e.message : String(e) });
+            }
+        });
+
+        socket.on('androidReady', (payload, ack) => {
+            try {
+                if (state.electron) state.electron.emit('androidReady', payload || { ok: true });
+                if (typeof ack === 'function') ack({ ok: true });
+            } catch (e) {
+                if (typeof ack === 'function') ack({ ok: false, error: e && e.message ? e.message : String(e) });
+            }
+        });
+
+        socket.on('duoAligned', (payload, ack) => {
+            try {
+                if (!payload || typeof payload !== 'object') throw new Error('duoAligned payload must be object');
+                const role = String(payload.role || '').trim().toLowerCase();
+                if (role !== 'electron' && role !== 'android') throw new Error('role must be electron|android');
+                state.aligned[role] = true;
+
+                if (state.aligned.electron && state.aligned.android) {
+                    if (state.electron) state.electron.emit('duoAligned', { ok: true });
+                    if (state.android) state.android.emit('duoAligned', { ok: true });
+                }
+
+                if (typeof ack === 'function') ack({ ok: true });
+            } catch (e) {
+                if (typeof ack === 'function') ack({ ok: false, error: e && e.message ? e.message : String(e) });
+            }
+        });
+
+        socket.on('duoData', (payload, ack) => {
+            try {
+                if (!payload || typeof payload !== 'object') throw new Error('duoData payload must be object');
+                const role = String(payload.role || '').trim().toLowerCase();
+                if (role !== 'electron' && role !== 'android') throw new Error('role must be electron|android');
+                const value = String(payload.value || '').trim();
+                if (!value) throw new Error('value must be non-empty');
+                if (value.length > 512) throw new Error('value too long (max 512)');
+
+                state.data[role] = { role, value };
+
+                if (state.data.electron && state.data.android) {
+                    const both = { ok: true, electron: state.data.electron, android: state.data.android };
+                    if (state.electron) state.electron.emit('duoData', both);
+                    if (state.android) state.android.emit('duoData', both);
+                }
+
+                if (typeof ack === 'function') ack({ ok: true });
+            } catch (e) {
+                if (typeof ack === 'function') ack({ ok: false, error: e && e.message ? e.message : String(e) });
+            }
+        });
+    });
+
+    httpServer.listen(DUO_COORD_PORT, '127.0.0.1');
+    return {
+        port: DUO_COORD_PORT,
+        close: async () => {
+            await new Promise((resolve, reject) => {
+                io.close();
+                httpServer.close((err) => (err ? reject(err) : resolve()));
+            });
+        },
+    };
 }
 
 function adbReversePortsOrThrow(serial, ports) {
@@ -265,6 +400,8 @@ function spawnElectronStartOrThrow() {
                 ...process.env,
                 // Keep electron alive even if Moniker completes.
                 GUNCELIUM_AUTO_EXIT_ON_TEST_COMPLETE: '0',
+                GUNCELIUM_DUO: '1',
+                GUNCELIUM_DUO_COORD_PORT: String(DUO_COORD_PORT),
                 // Ensure Electron renderer points at the same Metro port.
                 EXPO_WEB_URL: `http://localhost:${String(EXPO_PORT)}`,
             },
@@ -291,17 +428,6 @@ function parseMonikerCompleteOrNull(line) {
         passed: requireInt(m[1], 'passed', 0, 1000000),
         failed: requireInt(m[2], 'failed', 0, 1000000),
     };
-}
-
-function parseAndroidLaunchUrlOrNull(line) {
-    const s = String(line || '');
-    const m = s.match(/\[duo\]\s+ANDROID_LAUNCH_URL=(\S+)/);
-    if (!m) return null;
-    const url = String(m[1] || '').trim();
-    if (!url) return null;
-    if (!url.toLowerCase().startsWith('guncelium://')) throw new Error('ANDROID_LAUNCH_URL must start with guncelium://');
-    if (url.length > 4096) throw new Error('ANDROID_LAUNCH_URL too long');
-    return url;
 }
 
 function pumpElectronLinesOrThrow(child, onLine) {
@@ -337,6 +463,8 @@ async function mainOrThrow() {
     const androidPackage = getAndroidPackageOrThrow();
     const reversePorts = parseReversePortsOrThrow();
 
+    const coord = startDuoCoordinatorOrThrow();
+
     // Start Electron (which should also bring up Metro via expo-electron).
     const electron = spawnElectronStartOrThrow();
 
@@ -349,7 +477,6 @@ async function mainOrThrow() {
     let desiredExitCode = null;
 
     let expoPreparedAndroid = false;
-    let androidLaunchUrl = null;
     let androidLaunched = false;
 
     let completeResolve = null;
@@ -363,6 +490,7 @@ async function mainOrThrow() {
         if (stopping) return;
         stopping = true;
         await stopChildOrThrow(electron);
+        await coord.close();
     };
 
     process.on('SIGINT', () => {
@@ -389,14 +517,10 @@ async function mainOrThrow() {
             expoPreparedAndroid = true;
         }
 
-        if (!androidLaunchUrl) {
-            const u = parseAndroidLaunchUrlOrNull(s);
-            if (u) androidLaunchUrl = u;
-        }
-
-        if (expoPreparedAndroid && androidLaunchUrl && !androidLaunched) {
+        if (expoPreparedAndroid && !androidLaunched) {
             androidLaunched = true;
-            adbOpenDeepLinkOrThrow(serial, androidPackage, androidLaunchUrl);
+            // Fixed deep link indicates “duo mode”; exchange params are delivered via socket.io.
+            adbOpenDeepLinkOrThrow(serial, androidPackage, 'guncelium://e2e/duo/v1');
         }
 
         const parsed = parseMonikerCompleteOrNull(s);

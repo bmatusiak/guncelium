@@ -297,6 +297,12 @@ function attachWireToPeerOrThrow(mesh, peer, wire) {
     wire.onerror = () => {
         mesh.bye(peer);
     };
+
+    // Important: the underlying socket may become OPEN before handlers are attached.
+    // If we miss the open edge, Gun will not `hi()` the peer and traffic may never flow.
+    if (wire.readyState === 1) {
+        mesh.hi(peer);
+    }
 }
 
 function installMeshWireOrThrow(mesh, socket) {
