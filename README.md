@@ -161,28 +161,26 @@ Native regeneration (CNG/prebuild):
 
 Notes:
 
-- The current in-app E2E test (below) is **Electron-renderer only** and will fail on Expo because it requires the Electron preload bridge (`window.ElectronNative`).
-- React Native Tor hosting + Gun-over-TCP hosting tests are not wired up yet (work in progress).
+- The Moniker E2E harness runs in both Electron renderer and React Native, but some tests are platform-gated (Electron-only vs RN-only).
+- Cross-device tests use a local Socket.IO “duo coordinator” started by the duo runner.
 
-### E2E (Electron UI / Test Moniker)
+### E2E (Moniker harness)
 
-This runs inside the Electron renderer and uses the real Tor + Gun services.
+These run inside the apps (Electron renderer and/or React Native) and exercise the real services.
 
-- Start Electron: `npm run electron:start`
-- In the app UI, open the **Test Moniker** panel
-- Run: **“Tor: host Gun TCP as hidden service”**
+Recommended cross-device run (Electron + Android):
 
-What it does (high level):
+- `npm run android:duo`
 
-- Starts Gun TCP on `127.0.0.1` with a random port
-- Ensures Tor is installed (installs if missing)
-- Creates a v3 hidden service mapping `virtualPort: 8888` → the Gun TCP port
-- Uses the freshly generated random onion identity as the TCP transport `peerId` (HELLO handshake) so double-connect/self-connect are handled deterministically
-- Starts Tor (non-destructive: `cleanSlate: false`)
-- Waits (bounded) for an onion hostname and prints `<hostname>.onion`
-- Stops Tor and Gun at the end (or on failure)
+This does the orchestration (starts Electron, starts the Socket.IO coordinator, does `adb reverse`, launches Android via a fixed deep link) and exits once both sides print the Moniker completion line.
 
-Test definition: [src/__e2e_tests__/torGunHosting.js](src/__e2e_tests__/torGunHosting.js)
+What it validates by default:
+
+- Duo alignment (Socket.IO barrier + validated data swap)
+- Tor on Android (smoke + hidden-service hosting + SOCKS fetch)
+- Tor cross-device connectivity using `guncelium-protocal` framed TCP (ping/pong over Tor)
+
+See the full ordering and test breakdown in [docs/testing-guide.md](docs/testing-guide.md).
 
 ### CLI smoke test (Node)
 
@@ -199,6 +197,17 @@ Notes:
 
 - CLI output is JSON lines (easy to pipe/parse).
 - The CLI uses a per-user state directory by default (`$XDG_STATE_HOME/guncelium` or `~/.local/state/guncelium`). Override with `--data-dir PATH`.
+
+### Gun testing (separate from Tor connectivity)
+
+Gun-specific tests are intentionally kept out of the “Tor connectivity” section so that Tor failures don’t get conflated with Gun replication behavior.
+
+- Local Gun (Electron HTTP/WS): [src/__e2e_tests__/torGunHosting.js](src/__e2e_tests__/torGunHosting.js)
+- Cross-device Gun-over-Tor (experimental):
+	- [src/__e2e_tests__/torGunExchangeHost.js](src/__e2e_tests__/torGunExchangeHost.js)
+	- [src/__e2e_tests__/torGunExchangeClient.js](src/__e2e_tests__/torGunExchangeClient.js)
+
+Enable/disable tests via the list in [src/init/panels/MonikerPanel.js](src/init/panels/MonikerPanel.js).
 
 ## Current wiring
 

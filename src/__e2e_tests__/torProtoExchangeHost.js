@@ -1,8 +1,5 @@
 import app from '../runtime/rectifyApp';
 
-// eslint-disable-next-line global-require
-const { createSocketAdapterOrThrow } = require('guncelium-protocal');
-
 function isElectronRenderer() {
     const root = (typeof globalThis !== 'undefined') ? globalThis : (typeof window !== 'undefined' ? window : null);
     const hasDom = (typeof window === 'object' && window && typeof window.document !== 'undefined');
@@ -179,6 +176,19 @@ async function getServerPortOrThrow(server) {
     );
 }
 
+function requireProtocalElectronApiOrThrow() {
+    const root = (typeof globalThis !== 'undefined') ? globalThis : null;
+    if (!root || typeof root !== 'object') throw new Error('globalThis missing');
+    const en = root.ElectronNative;
+    if (!en || typeof en !== 'object') throw new Error('ElectronNative missing');
+    const api = en['guncelium-protocal'];
+    if (!api || typeof api !== 'object' || api._missing) throw new Error('ElectronNative[guncelium-protocal] missing');
+    requireFunction(api.serverStart, 'protocal.serverStart');
+    requireFunction(api.serverWaitPing, 'protocal.serverWaitPing');
+    requireFunction(api.serverStop, 'protocal.serverStop');
+    return api;
+}
+
 async function connectDuoCoordinatorOrThrow() {
     // eslint-disable-next-line global-require
     const { io } = require('socket.io-client');
@@ -233,12 +243,10 @@ export default {
                 requireFunction(assert.ok, 'assert.ok');
                 if (typeof log !== 'function') throw new Error('log must be a function');
 
-                // eslint-disable-next-line global-require
-                const net = require('net');
-                requireObject(net, 'net');
-
                 const tor = await waitForServiceOrThrow('tor');
                 requireObject(tor, 'tor service');
+
+                const protocal = requireProtocalElectronApiOrThrow();
 
                 await ensureTorInstalledOrThrow(tor);
                 await ensureTorStoppedOrThrow(assert, tor);
@@ -246,33 +254,20 @@ export default {
                 const runId = String(Date.now());
                 const serverPeerId = `a-electron-${runId}`;
 
-                const serverAdapter = createSocketAdapterOrThrow(net, {
-                    enableHello: true,
-                    peerId: serverPeerId,
-                    helloTimeoutMs: 5000,
-                });
-
-                let gotPing = false;
                 let server = null;
+                let serverId = null;
                 let torStarted = false;
                 let coord = null;
 
                 try {
-                    server = serverAdapter.listen(0, (peer) => {
-                        try {
-                            peer.onmessage = (ev) => {
-                                const d = ev && ev.data !== undefined ? ev.data : null;
-                                if (typeof d === 'string' && d === 'ping') {
-                                    gotPing = true;
-                                    peer.send('pong');
-                                }
-                            };
-                        } catch (_e) {
-                            try { peer.close(); } catch (_e2) { }
-                        }
-                    }, '127.0.0.1');
-
-                    const localPort = await getServerPortOrThrow(server);
+                    log('starting local tcp server...');
+                    const startedServer = await protocal.serverStart({ peerId: serverPeerId, helloTimeoutMs: 5000 });
+                    requireObject(startedServer, 'protocal.serverStart');
+                    if (startedServer.ok !== true) throw new Error(`protocal.serverStart failed: ${JSON.stringify(startedServer)}`);
+                    requireString(startedServer.serverId, 'serverId');
+                    serverId = String(startedServer.serverId);
+                    const localPort = Number(startedServer.port);
+                    if (!Number.isInteger(localPort) || localPort <= 0 || localPort > 65535) throw new Error('protocal.serverStart port invalid');
                     assert.ok(localPort > 0, 'server must bind');
 
                     log('creating hidden service config...');
@@ -305,12 +300,14 @@ export default {
                     });
 
                     log('waiting for Android ping over Tor...');
-                    await waitForOrThrow(async () => (gotPing === true ? true : null), 'android ping', 200, 250);
+                    const waited = await protocal.serverWaitPing({ serverId, timeoutMs: 120000 });
+                    requireObject(waited, 'protocal.serverWaitPing');
+                    if (waited.ok !== true) throw new Error(`protocal.serverWaitPing failed: ${JSON.stringify(waited)}`);
 
                     log('ok', `${onionBase}.onion`);
                 } finally {
                     try { if (coord) coord.close(); } catch (_e3) { }
-                    try { if (server) server.close(); } catch (_e4) { }
+                    try { if (serverId) await protocal.serverStop({ serverId }); } catch (_e4) { }
                     if (torStarted) {
                         const stopped = await tor.stop();
                         requireObject(stopped, 'tor.stop');

@@ -2,9 +2,8 @@ import React from 'react';
 import { Text, View } from 'react-native';
 
 import duoAlign from '../../__e2e_tests__/duoAlign';
-import torGunHosting from '../../__e2e_tests__/torGunHosting';
-import torGunExchangeHost from '../../__e2e_tests__/torGunExchangeHost';
-import torGunExchangeClient from '../../__e2e_tests__/torGunExchangeClient';
+import torProtoExchangeHost from '../../__e2e_tests__/torProtoExchangeHost';
+import torProtoExchangeClient from '../../__e2e_tests__/torProtoExchangeClient';
 import rnTorSmoke from '../../__e2e_tests__/rnTorSmoke';
 import rnTorHosting from '../../__e2e_tests__/rnTorHosting';
 
@@ -29,11 +28,10 @@ export default function MonikerPanel({ moniker }) {
                 duoAlign,
 
                 // Tor
-                torGunHosting,
                 rnTorSmoke,
                 rnTorHosting,
-                torGunExchangeHost,
-                torGunExchangeClient,
+                torProtoExchangeHost,
+                torProtoExchangeClient,
             ]} />
         </View>
     );

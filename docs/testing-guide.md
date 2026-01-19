@@ -54,21 +54,13 @@ Goal: Prove Tor is installable/bootable and that each platform can host or use T
 
 Order and purpose:
 
-1) **TorGunHosting (Electron only)**
-- File: [src/__e2e_tests__/torGunHosting.js](src/__e2e_tests__/torGunHosting.js)
-- Runs only in Electron renderer.
-- Verifies:
-  - Electron Gun service works (HTTP/WS sync sanity)
-  - Electron Gun TCP can be hosted
-  - Tor hidden service can be created with a fresh random onion identity
-
-2) **RnTorSmoke (Android/React Native only)**
+1) **RnTorSmoke (Android/React Native only)**
 - File: [src/__e2e_tests__/rnTorSmoke.js](src/__e2e_tests__/rnTorSmoke.js)
 - Runs only in React Native.
 - Verifies:
   - RN Tor service is present and `tor.status()` returns sane values
 
-3) **RnTorHosting (Android/React Native only)**
+2) **RnTorHosting (Android/React Native only)**
 - File: [src/__e2e_tests__/rnTorHosting.js](src/__e2e_tests__/rnTorHosting.js)
 - Runs only in React Native.
 - Verifies:
@@ -82,30 +74,30 @@ What this subsection provides:
 
 ### 1.2 Tor Cross-Device Tests (Electron ↔ Android)
 
-Goal: Prove two devices can exchange Gun data over Tor.
+Goal: Prove two devices can connect and exchange a small framed message over Tor (no Gun).
 
 There are two tests that cooperate:
 
-1) **TorGunExchangeHost (Electron only)**
-- File: [src/__e2e_tests__/torGunExchangeHost.js](src/__e2e_tests__/torGunExchangeHost.js)
+1) **TorProtoExchangeHost (Electron only)**
+- File: [src/__e2e_tests__/torProtoExchangeHost.js](src/__e2e_tests__/torProtoExchangeHost.js)
 - Runs only in Electron renderer.
 - Responsibilities:
-  - Start Gun TCP in Electron main
-  - Create a fresh hidden service (random onion) mapping onion port `8888` → local Gun TCP port
+  - Start a local framed protocol server (TCP)
+  - Create a fresh hidden service (random onion) mapping onion port `8888` → local protocol TCP port
   - Publish exchange parameters to the Duo coordinator via Socket.IO (e.g. onion hostname and port)
 
-2) **TorGunExchangeClient (Android/React Native only)**
-- File: [src/__e2e_tests__/torGunExchangeClient.js](src/__e2e_tests__/torGunExchangeClient.js)
+2) **TorProtoExchangeClient (Android/React Native only)**
+- File: [src/__e2e_tests__/torProtoExchangeClient.js](src/__e2e_tests__/torProtoExchangeClient.js)
 - Runs only in React Native.
 - Responsibilities:
   - Use the deep link only as the signal that the run is in “duo mode” (the deep link is fixed)
   - Connect to the Duo coordinator and receive exchange parameters via Socket.IO
   - Start Tor and wait until `tor.status().running === true`
-  - Start Gun TCP client configured to connect to `tcp://<onion>.onion:8888` via Tor SOCKS
-  - Write a `ping` value; wait for the `pong` response
+  - Dial `tcp://<onion>.onion:8888` via Tor SOCKS using `guncelium-protocal`
+  - Send a framed `ping`; wait for framed `pong`
 
 What this subsection provides:
-- A single, end-to-end signal that cross-device Tor + framed TCP + Gun are working.
+- A single, end-to-end signal that cross-device Tor + SOCKS + framed protocol are working.
 
 ## Duo Runner Integration (Electron-first)
 
@@ -138,12 +130,41 @@ Common causes we’ve seen during runs:
 
 Mitigations in current tests:
 
-- Cross-device client waits for `tor.status()` to report running before attempting Gun-over-Tor.
+- Cross-device client waits for `tor.status()` to report running before attempting any SOCKS dial.
 - Cross-device host allows a longer bounded wait for the Android ping.
 
 Additional note:
 
 - The Duo coordinator eliminates several race conditions (e.g., Android starting its Tor/Gun dial before Electron finished creating the hidden service), but Tor itself can still be slow to bootstrap.
+
+## Section 2: Gun
+
+Goal: Test **Gun functionality** separately from Tor connectivity, so failures are attributable.
+
+### 2.1 Gun (Electron local HTTP/WS)
+
+- File: [src/__e2e_tests__/torGunHosting.js](src/__e2e_tests__/torGunHosting.js)
+- Runs in Electron renderer.
+- What it verifies (high-level):
+  - Electron Gun service can start an HTTP/WS peer endpoint.
+  - Two renderer Gun clients can connect and replicate a small value.
+
+Note: This test is currently **not** in the default Moniker run order (the Tor section is intentionally protocol-only). To run it, add it back into the list in [src/init/panels/MonikerPanel.js](src/init/panels/MonikerPanel.js).
+
+### 2.2 Gun (Cross-device over Tor) — experimental
+
+- Files:
+  - [src/__e2e_tests__/torGunExchangeHost.js](src/__e2e_tests__/torGunExchangeHost.js)
+  - [src/__e2e_tests__/torGunExchangeClient.js](src/__e2e_tests__/torGunExchangeClient.js)
+
+These are end-to-end integration tests for **Gun replication over the framed TCP transport over Tor**.
+
+They are intentionally documented separately from Section 1 because:
+
+- Tor bootstrap + SOCKS dial readiness is one failure domain.
+- Gun replication behavior is a different failure domain.
+
+If you enable these tests, keep [src/__e2e_tests__/duoAlign.js](src/__e2e_tests__/duoAlign.js) first so coordinator alignment stays deterministic.
 
 ## Current Development Note
 

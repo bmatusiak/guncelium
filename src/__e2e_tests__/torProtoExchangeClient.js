@@ -35,6 +35,16 @@ async function sleepMsOrThrow(ms) {
     return new Promise((resolve) => setTimeout(resolve, n));
 }
 
+async function timeoutMsOrThrow(ms, label) {
+    const n = Number(ms);
+    if (!Number.isFinite(n) || n < 0 || n > 300000) throw new Error('timeoutMsOrThrow: ms must be 0..300000');
+    const s = String(label || '').trim();
+    if (!s) throw new Error('timeoutMsOrThrow: label is required');
+    return new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(s)), n);
+    });
+}
+
 async function waitForOrThrow(getter, label, maxAttempts, delayMs) {
     requireFunction(getter, 'getter');
     requireString(label, 'label');
@@ -193,7 +203,7 @@ export default {
                 log('waiting for exchange params from Electron...');
                 const params = await Promise.race([
                     paramsPromise,
-                    sleepMsOrThrow(120000).then(() => { throw new Error('timeout waiting for exchangeParams (duo)'); }),
+                    timeoutMsOrThrow(120000, 'timeout waiting for exchangeParams (duo)'),
                 ]);
 
                 requireObject(params, 'exchangeParams');
@@ -257,10 +267,10 @@ export default {
                     let gotPong = false;
                     sock.onmessage = (ev) => {
                         const d = ev && ev.data !== undefined ? ev.data : null;
-                        if (typeof d === 'string' && d === 'pong') gotPong = true;
+                        if (d && typeof d === 'object' && d.t === 'pong') gotPong = true;
                     };
 
-                    sock.send('ping');
+                    sock.send({ t: 'ping' });
                     await waitForOrThrow(async () => (gotPong === true ? true : null), 'pong', 160, 250);
 
                     try { sock.close(); } catch (_e) { }

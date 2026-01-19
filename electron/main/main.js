@@ -63,9 +63,11 @@ if (ENABLE_RENDERER_DIAGNOSTICS) {
 // These back the Electron preload bridge used by the renderer.
 const { registerIpcHandlersOrThrow: registerGunIpcHandlersOrThrow } = require('guncelium-gun/main');
 const { registerIpcHandlersOrThrow: registerTorIpcHandlersOrThrow } = require('guncelium-tor/main');
+const { registerIpcHandlersOrThrow: registerProtocalIpcHandlersOrThrow } = require('guncelium-protocal/main');
 
 registerGunIpcHandlersOrThrow({ ipcMain, electronApp: app });
 registerTorIpcHandlersOrThrow({ ipcMain, electronApp: app });
+registerProtocalIpcHandlersOrThrow({ ipcMain, electronApp: app });
 
 function requireObject(value, name) {
     if (!value || typeof value !== 'object') throw new Error(`${name} must be an object`);
