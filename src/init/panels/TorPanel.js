@@ -1,22 +1,11 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { Button, Text, View } from 'react-native';
 
+import { pickGunTorHostingKeysOrThrow } from '../../tor/keyPool';
+
 import { jsonForLogOrThrow, requireFunction, safeJson, toErrorMessage } from './util';
 
-const DEFAULT_GUN_KEYS = [
-    {
-        // public bootstrap key (stable)
-        onion: 'gunkqyuamvuycqqjamtlupxkazmnbnq7avqn2eogc5fkxlpujj5bb5ad',
-        seed_hex: 'f716a615bcca28bffede1ddaff734240e8e3e1f02156a3e4e2b8248f9894b348',
-        pub_hex: '351aa8628065698142090326ba3eea0658d0b61f0560dd11c6174aabadf44a7a',
-        generate: false,
-    },
-    {
-        // private service key (fresh for anonymity)
-        generate: true,
-        maxAttempts: 250000,
-    },
-];
+const DEFAULT_GUN_KEY_MAX_ATTEMPTS = 250000;
 
 function normalizeInfo(info) {
     if (!info || typeof info !== 'object') return { installed: false, running: false, raw: info || null };
@@ -218,7 +207,7 @@ export default function TorPanel({ tor, gunTcpPort }) {
                 virtualPort: 8888,
                 service: 'gun-tcp',
                 controlPort: true,
-                keys: DEFAULT_GUN_KEYS,
+                keys: pickGunTorHostingKeysOrThrow({ bootstrapCount: 1, includeRandom: true, maxAttempts: DEFAULT_GUN_KEY_MAX_ATTEMPTS }),
             });
 
             // eslint-disable-next-line no-console

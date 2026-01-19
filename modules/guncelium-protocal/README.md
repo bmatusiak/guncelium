@@ -19,6 +19,13 @@ This makes it possible to:
 - This module provides a socket adapter (`createSocketAdapterOrThrow`) and a SOCKS5 HTTP probe (`socks5HttpGetOrThrow`).
 - This module does **not** start Tor or create hidden services; that is handled by `guncelium-tor`.
 
+## Default ports
+
+These are the recommended defaults used across this repo and are intended to be “sane defaults” for Gun:
+
+- Gun TCP (this framed protocol): `9876`
+- Gun HTTP/WS: `8765`
+
 ## Framing protocol
 
 Each frame is:
@@ -41,6 +48,28 @@ The socket adapter treats a destination as an onion service when the host matche
 - Tor v2 (legacy): 16 base32 chars with or without the `.onion` suffix
 
 When an onion host is detected, the adapter connects to `socksHost:socksPort` and performs a SOCKS5 CONNECT to `<onion>.onion:<port>`.
+
+## Canonical peer URL format
+
+Use a single canonical peer URL string everywhere (Gun mesh, config, UI):
+
+`tcp://<host>:<port>`
+
+Where:
+
+- `<port>` is `1..65535`
+- `<host>` is either:
+  - a normal host/IP (direct TCP), e.g. `127.0.0.1`, `example.com`
+  - an onion hostname (SOCKS/Tor), either of:
+    - v3 host without suffix: `<56 base32 chars>`
+    - v3 host with suffix: `<56 base32 chars>.onion`
+    - (legacy) v2 host without suffix: `<16 base32 chars>`
+    - (legacy) v2 host with suffix: `<16 base32 chars>.onion`
+
+Notes:
+
+- The adapter chooses SOCKS vs direct based on the `<host>` value.
+- The rest of the system should treat the peer URL as opaque and avoid trying to “fix up” `.onion` suffixes; passing either form is supported.
 
 ## API
 
@@ -97,7 +126,8 @@ const { createSocketAdapterOrThrow } = require('guncelium-protocal');
 const Net = createSocketAdapterOrThrow(net, { socksHost: '127.0.0.1', socksPort: 9050 });
 
 // Onion host can be with or without .onion
-const wire = await Net.connect('abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwxyz234567abcdefghijkl', 8888);
+const onionHost = 'abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwxyz234567abcdefghijkl';
+const wire = await Net.connect(onionHost, 8888);
 wire.send({ ping: 1 });
 ```
 

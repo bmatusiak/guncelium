@@ -17,6 +17,100 @@ function requireString(value, name) {
     if (typeof value !== 'string' || value.trim().length === 0) throw new Error(`${name} must be a non-empty string`);
 }
 
+function requireInteger(value, name) {
+    const n = Number(value);
+    if (!Number.isInteger(n)) throw new Error(`${name} must be an integer`);
+    return n;
+}
+
+function requireListenPort(value, name) {
+    const n = requireInteger(value, name);
+    if (n < 0 || n > 65535) throw new Error(`${name} must be in 0..65535`);
+    return n;
+}
+
+function requirePort(value, name) {
+    const n = requireInteger(value, name);
+    if (n < 1 || n > 65535) throw new Error(`${name} must be in 1..65535`);
+    return n;
+}
+
+function parseTcpPeerOrThrow(s) {
+    requireString(s, 'peer');
+    const stripped = String(s).trim().replace(/^tcp:\/\//, '');
+    const m = stripped.match(/^(.+?):(\d{1,5})$/);
+    if (!m) throw new Error(`peer must be tcp://host:port (or host:port), got: ${String(s)}`);
+    const host = String(m[1] || '').trim();
+    requireString(host, 'peer.host');
+    const port = requirePort(m[2], 'peer.port');
+    return { host, port, url: `tcp://${host}:${port}` };
+}
+
+function createPeerIdOrThrow(prefix, n) {
+    requireString(prefix, 'prefix');
+    const i = requireInteger(n, 'n');
+    const ts = Date.now();
+    return `${prefix}-${String(ts)}-${String(i)}`;
+}
+
+function requireGunMeshOrThrow(gun) {
+    requireObjectLike(gun, 'gun');
+    const opt = gun._ && gun._.opt;
+    if (!opt || typeof opt !== 'object') throw new Error('gun opt missing');
+    const mesh = opt.mesh;
+    if (!mesh || typeof mesh !== 'function') throw new Error('gun mesh missing');
+    if (typeof mesh.hear !== 'function') throw new Error('gun mesh.hear missing');
+    if (typeof mesh.hi !== 'function') throw new Error('gun mesh.hi missing');
+    if (typeof mesh.bye !== 'function') throw new Error('gun mesh.bye missing');
+    return mesh;
+}
+
+function attachWireToPeerOrThrow(mesh, peer, wire) {
+    if (typeof mesh !== 'function') throw new Error('mesh must be a function');
+    requireObject(peer, 'peer');
+    requireObject(wire, 'wire');
+
+    peer.wire = wire;
+    wire.onmessage = (ev) => {
+        if (!ev) throw new Error('wire message event missing');
+        mesh.hear(ev.data, peer);
+    };
+    wire.onopen = () => {
+        mesh.hi(peer);
+    };
+    wire.onclose = () => {
+        mesh.bye(peer);
+    };
+    wire.onerror = () => {
+        mesh.bye(peer);
+    };
+}
+
+function crashAsyncOrThrow(e) {
+    const err = (e instanceof Error) ? e : new Error(String(e));
+    setTimeout(() => { throw err; }, 0);
+    throw err;
+}
+
+async function waitForServerListeningOrThrow(server) {
+    requireObject(server, 'server');
+    if (typeof server.once !== 'function') throw new Error('server.once must be a function');
+    if (typeof server.listening === 'boolean' && server.listening) return;
+
+    await new Promise((resolve, reject) => {
+        const onError = (err) => {
+            server.removeListener('listening', onListening);
+            reject(err);
+        };
+        const onListening = () => {
+            server.removeListener('error', onError);
+            resolve();
+        };
+        server.once('error', onError);
+        server.once('listening', onListening);
+    });
+}
+
 function normalizePeersOrThrow(peers) {
     if (peers === undefined || peers === null) return [];
     requireArray(peers, 'opts.peers');
@@ -67,6 +161,13 @@ function createGunReactNativeApiOrThrow() {
     const state = {
         gun: null,
         peers: [],
+        tcp: {
+            server: null,
+            port: null,
+            gun: null,
+            peers: [],
+            socksPort: 8765,
+        },
     };
 
     function get() {
@@ -125,7 +226,111 @@ function createGunReactNativeApiOrThrow() {
         };
     }
 
-    return { start, stop, status, get };
+    async function tcpStart(opts) {
+        if (state.tcp.server) throw new Error('gun tcp already running');
+        const o = (opts && typeof opts === 'object') ? opts : {};
+        const desiredPort = (o.port === undefined || o.port === null) ? 0 : requireListenPort(o.port, 'opts.port');
+        const host = (o.host === undefined || o.host === null) ? '127.0.0.1' : String(o.host);
+        requireString(host, 'opts.host');
+        const socksPort = (o.socksPort === undefined || o.socksPort === null) ? 8765 : requirePort(o.socksPort, 'opts.socksPort');
+        const peers = normalizePeersOrThrow(o.peers);
+
+        // eslint-disable-next-line global-require
+        const TcpSocket = require('react-native-tcp-socket');
+        if (!TcpSocket || typeof TcpSocket.createConnection !== 'function') throw new Error('react-native-tcp-socket.createConnection is required');
+        if (typeof TcpSocket.createServer !== 'function') throw new Error('react-native-tcp-socket.createServer is required');
+
+        // eslint-disable-next-line global-require
+        const { createSocketAdapterOrThrow } = require('guncelium-protocal');
+        if (typeof createSocketAdapterOrThrow !== 'function') throw new Error('guncelium-protocal.createSocketAdapterOrThrow is required');
+
+        const socket = createSocketAdapterOrThrow(TcpSocket, { socksHost: '127.0.0.1', socksPort });
+
+        const gun = Gun({ peers: [], localStorage: false });
+        requireObjectLike(gun, 'gun');
+        if (typeof gun.get !== 'function') throw new Error('gun initialization failed (missing get)');
+
+        const mesh = requireGunMeshOrThrow(gun);
+
+        // Outgoing wire: connect using the framed TCP protocol.
+        mesh.wire = (peer) => {
+            requireObject(peer, 'peer');
+            if (peer.wire) return;
+            if (!peer.url) throw new Error('peer.url is required');
+
+            const parsed = parseTcpPeerOrThrow(String(peer.url));
+            peer.url = parsed.url;
+
+            socket.connect(parsed.host, parsed.port).then((wire) => {
+                attachWireToPeerOrThrow(mesh, peer, wire);
+            }).catch((e) => {
+                crashAsyncOrThrow(e);
+            });
+        };
+
+        // Incoming: accept framed TCP wires.
+        let inbound = 0;
+        const server = socket.listen(desiredPort, (wire) => {
+            inbound += 1;
+            if (inbound > 128) throw new Error('too many inbound tcp peers (128)');
+            const peer = { id: null, url: createPeerIdOrThrow('tcp-in', inbound), wire: null };
+            attachWireToPeerOrThrow(mesh, peer, wire);
+        }, host);
+
+        await waitForServerListeningOrThrow(server);
+
+        const addr = (server && typeof server.address === 'function') ? server.address() : null;
+        const boundPort = (addr && typeof addr === 'object' && addr.port) ? requirePort(addr.port, 'server.address().port') : null;
+        if (!boundPort) throw new Error('gun tcp server missing bound port');
+
+        for (let i = 0; i < peers.length; i++) {
+            const t = parseTcpPeerOrThrow(peers[i]);
+            mesh.hi({ url: t.url, id: t.url });
+        }
+
+        state.tcp.server = server;
+        state.tcp.port = boundPort;
+        state.tcp.gun = gun;
+        state.tcp.peers = peers;
+        state.tcp.socksPort = socksPort;
+
+        return { ok: true, running: true, port: boundPort, host, peers, socksPort };
+    }
+
+    async function tcpStop() {
+        if (!state.tcp.server) throw new Error('gun tcp not running');
+        const s = state.tcp.server;
+        await new Promise((resolve, reject) => {
+            if (typeof s.close !== 'function') return reject(new Error('tcp server.close is required'));
+            s.close((err) => (err ? reject(err) : resolve()));
+        });
+        state.tcp.server = null;
+        state.tcp.port = null;
+        state.tcp.gun = null;
+        state.tcp.peers = [];
+        return { ok: true, running: false };
+    }
+
+    async function tcpStatus() {
+        return {
+            ok: true,
+            running: !!state.tcp.server,
+            port: state.tcp.port,
+            peers: state.tcp.peers,
+            socksPort: state.tcp.socksPort,
+            mode: 'react-native',
+        };
+    }
+
+    return {
+        start,
+        stop,
+        status,
+        get,
+        tcpStart,
+        tcpStop,
+        tcpStatus,
+    };
 }
 
 module.exports = createGunReactNativeApiOrThrow;
