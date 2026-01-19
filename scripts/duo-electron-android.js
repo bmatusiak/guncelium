@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const readline = require('node:readline');
 
-const MAX_WAIT_MS = 10 * 60 * 1000; // 10 minutes (bounded)
+const MAX_WAIT_MS = 6 * 60 * 60 * 1000; // 6 hours (bounded)
 const MAX_ADB_MS = 15000;
 const EXPO_PORT = 8081;
 
@@ -290,9 +290,11 @@ async function mainOrThrow() {
     throw new Error(`electron exited (code=${String(code)} signal=${String(signal)})`);
 }
 
-mainOrThrow().catch((e) => {
-    const msg = e && e.stack ? e.stack : (e && e.message ? e.message : String(e));
-    // eslint-disable-next-line no-console
-    console.error(msg);
-    process.exit(2);
-});
+if (require.main === module) {
+    mainOrThrow().catch((e) => {
+        const msg = e && e.stack ? e.stack : (e && e.message ? e.message : String(e));
+        // eslint-disable-next-line no-console
+        console.error(msg);
+        process.exit(2);
+    });
+}

@@ -243,6 +243,23 @@ async function createHiddenServiceOrThrow(tor, gunPort, keys) {
     return created;
 }
 
+function pickGeneratedKeyResultOrThrow(createResult) {
+    requireObject(createResult, 'createResult');
+    if (!Array.isArray(createResult.results) || createResult.results.length < 1) throw new Error('hidden service create returned no results');
+
+    for (let i = 0; i < createResult.results.length; i++) {
+        const r = createResult.results[i];
+        if (!r || typeof r !== 'object') continue;
+        const k = r.key;
+        if (!k || typeof k !== 'object') continue;
+        if (k.generate === true && r.ok === true && r.onion_expected) {
+            return r;
+        }
+    }
+
+    throw new Error('failed to locate generated key result (expected an entry with key.generate=true and onion_expected)');
+}
+
 async function waitForOnionOrThrow(tor, expectedOnion) {
     const want = requireV3OnionHostname(expectedOnion, 'expectedOnion');
     const st = await waitForOrThrow(
@@ -313,25 +330,25 @@ export default {
                     await assertRendererGunSyncOrThrow(assert, log, gun);
 
                     // eslint-disable-next-line global-require
-                    const { generateV3OnionVanity } = require('guncelium-tor/onion');
-                    if (typeof generateV3OnionVanity !== 'function') throw new Error('guncelium-tor/onion.generateV3OnionVanity not available');
-
-                    // Generate the random onion identity BEFORE starting Tor, and use it as the peerId.
-                    // Deterministic bound: maxAttempts=1 always succeeds for non-vanity generation.
-                    const randomKey = generateV3OnionVanity({ prefix: null, maxAttempts: 1 });
-                    requireObject(randomKey, 'randomKey');
-                    requireString(randomKey.onion, 'randomKey.onion');
-                    requireString(randomKey.seed_hex, 'randomKey.seed_hex');
-                    requireString(randomKey.pub_hex, 'randomKey.pub_hex');
-                    const peerId = requireV3OnionHostname(randomKey.onion, 'peerId');
-
                     log('starting gun tcp...');
                     const tempDir = await getElectronTempDirOrThrow();
                     const tcpStoreDir = joinPathOrThrow(tempDir, `guncelium-e2e-gun-tcp-${nowMs()}-${randomSuffixOrThrow()}`);
-                    gunStarted = await gun.tcpStart({ host: '127.0.0.1', port: 0, peerId, peers: [], storeDir: tcpStoreDir });
+                    // Reserve a TCP port first.
+                    // We will restart Gun TCP with a deterministic peerId once we have generated an onion key.
+                    gunStarted = await gun.tcpStart({ host: '127.0.0.1', port: 0, peers: [], storeDir: tcpStoreDir });
                     requireObject(gunStarted, 'gun.tcpStart result');
                     assert.ok(gunStarted.ok === true && gunStarted.running === true, 'gun tcp must be running');
                     assert.ok(!!gunStarted.port, 'gun tcp must have a port');
+                    const reservedPort = Number(gunStarted.port);
+                    if (!Number.isInteger(reservedPort) || reservedPort < 1 || reservedPort > 65535) throw new Error('gun tcp reservedPort invalid');
+
+                    log('stopping gun tcp (reserve port only)...');
+                    {
+                        const stopped = await gun.tcpStop();
+                        requireObject(stopped, 'gun.tcpStop (reserve) result');
+                        assert.ok(stopped.ok === true, 'gun.tcpStop (reserve) ok');
+                    }
+                    gunStarted = null;
 
                     log('ensuring tor installed...');
                     await ensureTorInstalledOrThrow(tor);
@@ -348,13 +365,16 @@ export default {
                     log('creating hidden service config...');
                     const bootstrapOnly = pickGunTorHostingKeysOrThrow({ bootstrapCount: 1, includeRandom: false });
                     if (!Array.isArray(bootstrapOnly) || bootstrapOnly.length !== 1) throw new Error('bootstrap key selection failed');
-                    const hsKeys = [bootstrapOnly[0], {
-                        onion: randomKey.onion,
-                        seed_hex: randomKey.seed_hex,
-                        pub_hex: randomKey.pub_hex,
-                        generate: false,
-                    }];
-                    await createHiddenServiceOrThrow(tor, gunStarted.port, hsKeys);
+                    const hsKeys = [bootstrapOnly[0], { generate: true, maxAttempts: 1 }];
+                    const created = await createHiddenServiceOrThrow(tor, reservedPort, hsKeys);
+                    const gen = pickGeneratedKeyResultOrThrow(created);
+                    const peerId = requireV3OnionHostname(gen.onion_expected, 'peerId');
+
+                    log('starting gun tcp with peerId (fixed port)...');
+                    gunStarted = await gun.tcpStart({ host: '127.0.0.1', port: reservedPort, peerId, peers: [], storeDir: tcpStoreDir });
+                    requireObject(gunStarted, 'gun.tcpStart (peerId) result');
+                    assert.ok(gunStarted.ok === true && gunStarted.running === true, 'gun tcp must be running');
+                    assert.ok(Number(gunStarted.port) === reservedPort, 'gun tcp must bind reserved port');
 
                     log('starting tor...');
                     await startTorOrThrow(tor);
