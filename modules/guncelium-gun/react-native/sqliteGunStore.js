@@ -13,7 +13,7 @@ function createGunSqliteStoreOrThrow(dbName) {
     const kv = createSqliteKeyValueOrThrow(dbName);
 
     // Gun expects a "store" function/object with put/get methods.
-    const store = function store() {};
+    const store = function store() { };
 
     store.put = (file, data, cb) => {
         requireString(String(file || ''), 'file');

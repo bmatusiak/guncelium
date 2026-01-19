@@ -183,7 +183,11 @@ function createGunMainControllerOrThrow({ electronApp }) {
         state.port = null;
         state.gun = null;
         state.storeDir = null;
-        if (state.store && typeof state.store.close === 'function') state.store.close();
+        if (state.store && typeof state.store.closeAsyncOrThrow === 'function') {
+            await state.store.closeAsyncOrThrow({ quietMs: 250, maxWaitMs: 4000 });
+        } else if (state.store && typeof state.store.close === 'function') {
+            state.store.close();
+        }
         state.store = null;
         state.sockets = new Set();
         return { ok: true, running: false };
@@ -485,7 +489,11 @@ function createGunTcpMeshControllerOrThrow({ electronApp }) {
         state.port = null;
         state.gun = null;
         state.storeDir = null;
-        if (state.store && typeof state.store.close === 'function') state.store.close();
+        if (state.store && typeof state.store.closeAsyncOrThrow === 'function') {
+            await state.store.closeAsyncOrThrow({ quietMs: 250, maxWaitMs: 4000 });
+        } else if (state.store && typeof state.store.close === 'function') {
+            state.store.close();
+        }
         state.store = null;
         state.socket = null;
         state.peerId = null;
