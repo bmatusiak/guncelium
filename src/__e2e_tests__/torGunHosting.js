@@ -2,8 +2,6 @@ import app from '../runtime/rectifyApp';
 import Gun from 'gun/gun';
 import 'gun/sea.js';
 
-import { pickGunTorHostingKeysOrThrow } from '../tor/keyPool';
-
 function isElectronRenderer() {
     const root = (typeof globalThis !== 'undefined') ? globalThis : (typeof window !== 'undefined' ? window : null);
     const hasDom = (typeof window === 'object' && window && typeof window.document !== 'undefined');
@@ -363,9 +361,8 @@ export default {
                     }
 
                     log('creating hidden service config...');
-                    const bootstrapOnly = pickGunTorHostingKeysOrThrow({ bootstrapCount: 1, includeRandom: false });
-                    if (!Array.isArray(bootstrapOnly) || bootstrapOnly.length !== 1) throw new Error('bootstrap key selection failed');
-                    const hsKeys = [bootstrapOnly[0], { generate: true, maxAttempts: 1 }];
+                    // For testing, always use a fresh random onion identity.
+                    const hsKeys = [{ generate: true, maxAttempts: 1 }];
                     const created = await createHiddenServiceOrThrow(tor, reservedPort, hsKeys);
                     const gen = pickGeneratedKeyResultOrThrow(created);
                     const peerId = requireV3OnionHostname(gen.onion_expected, 'peerId');

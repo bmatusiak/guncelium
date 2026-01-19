@@ -182,12 +182,7 @@ async function listenOnFirstFreePortOrThrow(server, host, ports) {
     throw new Error('no free port found in fixed port list');
 }
 
-const STATIC_BOOTSTRAP_KEY = {
-    onion: 'gunkqyuamvuycqqjamtlupxkazmnbnq7avqn2eogc5fkxlpujj5bb5ad',
-    seed_hex: 'f716a615bcca28bffede1ddaff734240e8e3e1f02156a3e4e2b8248f9894b348',
-    pub_hex: '351aa8628065698142090326ba3eea0658d0b61f0560dd11c6174aabadf44a7a',
-    generate: false,
-};
+const RANDOM_ONION_KEY = { generate: true, maxAttempts: 1 };
 
 export default {
     name: 'RnTorHosting',
@@ -221,6 +216,17 @@ export default {
                 let torStarted = false;
 
                 try {
+                    log('ensuring tor is stopped...');
+                    {
+                        const pre = await tor.status();
+                        requireObject(pre, 'tor.status (pre)');
+                        if (pre.running === true) {
+                            const stopped = await tor.stop();
+                            requireObject(stopped, 'tor.stop (pre)');
+                            assert.ok(stopped.ok === true, 'tor.stop (pre) ok');
+                        }
+                    }
+
                     log('starting local tcp server...');
                     port = await listenOnFirstFreePortOrThrow(server, '127.0.0.1', [9876, 9877, 9878, 9879, 9880, 9881, 9882, 9883, 9884, 9885]);
                     assert.ok(!!port, 'tcp server must have a port');
@@ -231,7 +237,8 @@ export default {
                         virtualPort: 80,
                         service: 'rn-tcp',
                         controlPort: true,
-                        keys: [STATIC_BOOTSTRAP_KEY],
+                        // For testing, always use a fresh random onion identity.
+                        keys: [RANDOM_ONION_KEY],
                     });
                     requireObject(created, 'hiddenServices.create result');
                     assert.ok(created.ok === true, 'hiddenServices.create must succeed');
@@ -299,7 +306,7 @@ export default {
                                     socksPort,
                                     targetHost: `${onion}.onion`,
                                     targetPort: onionServicePort,
-                                    timeoutMs: 2500,
+                                    timeoutMs: 5000,
                                     maxBytes: 128 * 1024,
                                 });
                                 last = r;
@@ -312,7 +319,7 @@ export default {
                             }
                         },
                         'SOCKS5 http 200 with marker',
-                        45,
+                        80,
                         250,
                     ).catch((e) => {
                         const details = last && typeof last === 'object'

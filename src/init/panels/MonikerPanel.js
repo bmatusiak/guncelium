@@ -2,6 +2,8 @@ import React from 'react';
 import { Text, View } from 'react-native';
 
 import torGunHosting from '../../__e2e_tests__/torGunHosting';
+import torGunExchangeHost from '../../__e2e_tests__/torGunExchangeHost';
+import torGunExchangeClient from '../../__e2e_tests__/torGunExchangeClient';
 import rnTorSmoke from '../../__e2e_tests__/rnTorSmoke';
 import rnTorHosting from '../../__e2e_tests__/rnTorHosting';
 
@@ -21,7 +23,16 @@ export default function MonikerPanel({ moniker }) {
     return (
         <View style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 12, marginBottom: 12 }}>
             <Text style={{ fontSize: 18, fontWeight: '700', marginBottom: 6 }}>Test Moniker</Text>
-            <MonikerView tests={[torGunHosting, rnTorSmoke, rnTorHosting]} />
+            <MonikerView tests={[
+                // Tor section: setup + self tests
+                torGunHosting,
+                rnTorSmoke,
+                rnTorHosting,
+
+                // Tor section: cross-device exchange (Electron ↔ Android)
+                torGunExchangeHost,
+                torGunExchangeClient,
+            ]} />
         </View>
     );
 }

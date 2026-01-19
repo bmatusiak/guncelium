@@ -10,6 +10,12 @@ const MAX_WAIT_MS = 6 * 60 * 60 * 1000; // 6 hours (bounded)
 const MAX_ADB_MS = 15000;
 const EXPO_PORT = 8081;
 
+function requireInt(value, name, min, max) {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < min || n > max) throw new Error(`${name} must be int ${min}..${max}`);
+    return n;
+}
+
 function readJsonFileOrThrow(filePath) {
     assert(typeof filePath === 'string' && filePath.length > 0, 'filePath required');
     const raw = fs.readFileSync(filePath, { encoding: 'utf8' });
@@ -48,6 +54,25 @@ function runAdbOrThrow(args, timeoutMs) {
     return { stdout: String(res.stdout || ''), stderr: String(res.stderr || '') };
 }
 
+function runAdbAllowStatusOrThrow(args, timeoutMs, allowedStatuses) {
+    assert(Array.isArray(args) && args.length > 0, 'adb args required');
+    assert(typeof timeoutMs === 'number' && timeoutMs > 0, 'timeoutMs required');
+    assert(Array.isArray(allowedStatuses) && allowedStatuses.length > 0, 'allowedStatuses required');
+
+    const res = spawnSync('adb', args, { encoding: 'utf8', timeout: timeoutMs });
+    assert(res && typeof res.status === 'number', 'adb did not return a status');
+    if (res.error) throw res.error;
+
+    const status = Number(res.status);
+    if (!allowedStatuses.includes(status)) {
+        const out = String(res.stdout || '').trim();
+        const err = String(res.stderr || '').trim();
+        throw new Error(`adb ${args.join(' ')} failed (status=${String(status)}): ${err || out}`);
+    }
+
+    return { status, stdout: String(res.stdout || ''), stderr: String(res.stderr || '') };
+}
+
 function pickAdbSerialOrThrow() {
     const envSerial = process.env.ANDROID_SERIAL || process.env.GUNCELIUM_ANDROID_SERIAL;
     if (typeof envSerial === 'string' && envSerial.length > 0) return envSerial;
@@ -75,10 +100,43 @@ function adbForceStopOrThrow(serial, androidPackage) {
     runAdbOrThrow(['-s', serial, 'shell', 'am', 'force-stop', androidPackage], MAX_ADB_MS);
 }
 
+function adbKillByPidofOrThrow(serial, androidPackage) {
+    assert(typeof serial === 'string' && serial.length > 0, 'serial required');
+    assert(typeof androidPackage === 'string' && androidPackage.length > 0, 'androidPackage required');
+
+    // pidof returns exit status 1 when the process is not running.
+    const r = runAdbAllowStatusOrThrow(['-s', serial, 'shell', 'pidof', androidPackage], MAX_ADB_MS, [0, 1]);
+    const out = String(r.stdout || '').trim();
+    if (!out) return; // already not running
+
+    const parts = out.split(/\s+/).filter(Boolean);
+    if (parts.length < 1 || parts.length > 20) throw new Error(`unexpected pidof pid count: ${String(parts.length)}`);
+
+    for (let i = 0; i < parts.length; i++) {
+        const pid = Number(parts[i]);
+        if (!Number.isInteger(pid) || pid < 1) throw new Error(`invalid pid from pidof: ${parts[i]}`);
+    }
+
+    // One kill invocation for all pids (bounded by 20).
+    runAdbOrThrow(['-s', serial, 'shell', 'kill', '-9', ...parts], MAX_ADB_MS);
+}
+
 function adbLaunchOrThrow(serial, androidPackage) {
     assert(typeof serial === 'string' && serial.length > 0, 'serial required');
     assert(typeof androidPackage === 'string' && androidPackage.length > 0, 'androidPackage required');
     runAdbOrThrow(['-s', serial, 'shell', 'monkey', '-p', androidPackage, '-c', 'android.intent.category.LAUNCHER', '1'], MAX_ADB_MS);
+}
+
+function adbOpenDeepLinkOrThrow(serial, androidPackage, url) {
+    assert(typeof serial === 'string' && serial.length > 0, 'serial required');
+    assert(typeof androidPackage === 'string' && androidPackage.length > 0, 'androidPackage required');
+    assert(typeof url === 'string' && url.length > 0, 'url required');
+
+    const activity = `${androidPackage}/.MainActivity`;
+    runAdbOrThrow(
+        ['-s', serial, 'shell', 'am', 'start', '-n', activity, '-a', 'android.intent.action.VIEW', '-d', url],
+        MAX_ADB_MS,
+    );
 }
 
 function parseReversePortsOrThrow() {
@@ -225,32 +283,53 @@ function isExpoReadyLine(line) {
     return false;
 }
 
-async function waitForExpoReadyOrThrow(child) {
-    assert(child && typeof child.pid === 'number', 'child.pid required');
-
-    let ready = false;
-
-    const onLine = async (line, isErr) => {
-        const s = String(line);
-        if (isErr) process.stderr.write(`${s}\n`);
-        else process.stdout.write(`${s}\n`);
-        if (!ready && isExpoReadyLine(s)) ready = true;
+function parseMonikerCompleteOrNull(line) {
+    const s = String(line || '');
+    const m = s.match(/\[Moniker\]\s+TEST COMPLETE\s*\|\s*Passed:\s*(\d+)\s+Failed:\s*(\d+)/);
+    if (!m) return null;
+    return {
+        passed: requireInt(m[1], 'passed', 0, 1000000),
+        failed: requireInt(m[2], 'failed', 0, 1000000),
     };
+}
+
+function parseAndroidLaunchUrlOrNull(line) {
+    const s = String(line || '');
+    const m = s.match(/\[duo\]\s+ANDROID_LAUNCH_URL=(\S+)/);
+    if (!m) return null;
+    const url = String(m[1] || '').trim();
+    if (!url) return null;
+    if (!url.toLowerCase().startsWith('guncelium://')) throw new Error('ANDROID_LAUNCH_URL must start with guncelium://');
+    if (url.length > 4096) throw new Error('ANDROID_LAUNCH_URL too long');
+    return url;
+}
+
+function pumpElectronLinesOrThrow(child, onLine) {
+    assert(child && typeof child.pid === 'number', 'child required');
+    assert(typeof onLine === 'function', 'onLine required');
+    assert(child.stdout, 'child.stdout required');
+    assert(child.stderr, 'child.stderr required');
 
     const rlOut = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
     const rlErr = readline.createInterface({ input: child.stderr, crlfDelay: Infinity });
 
-    rlOut.on('line', (line) => { onLine(line, false).catch((e) => { throw e; }); });
-    rlErr.on('line', (line) => { onLine(line, true).catch((e) => { throw e; }); });
+    rlOut.on('line', (line) => {
+        onLine(String(line), false).catch((e) => {
+            const msg = e && e.stack ? e.stack : (e && e.message ? e.message : String(e));
+            // eslint-disable-next-line no-console
+            console.error(msg);
+            process.exit(2);
+        });
+    });
 
-    const maxSteps = Math.floor(MAX_WAIT_MS / 250);
-    for (let i = 0; i < maxSteps; i++) {
-        if (ready) return;
-        // eslint-disable-next-line no-await-in-loop
-        await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-
-    throw new Error(`timeout waiting for Metro on :${String(EXPO_PORT)}`);
+    rlErr.on('line', (line) => {
+        onLine(String(line), true).catch((e) => {
+            const msg = e && e.stack ? e.stack : (e && e.message ? e.message : String(e));
+            // eslint-disable-next-line no-console
+            console.error(msg);
+            process.exit(2);
+        });
+    });
 }
 
 async function mainOrThrow() {
@@ -260,6 +339,24 @@ async function mainOrThrow() {
 
     // Start Electron (which should also bring up Metro via expo-electron).
     const electron = spawnElectronStartOrThrow();
+
+    let expoReady = false;
+    let monikerCompleteCount = 0;
+    let monikerFailedAny = false;
+    let monikerA = null;
+    let monikerB = null;
+    let duoDone = false;
+    let desiredExitCode = null;
+
+    let expoPreparedAndroid = false;
+    let androidLaunchUrl = null;
+    let androidLaunched = false;
+
+    let completeResolve = null;
+    const completionPromise = new Promise((resolve) => {
+        completeResolve = resolve;
+    });
+    assert(typeof completeResolve === 'function', 'completionPromise resolver missing');
 
     let stopping = false;
     const cleanupOrThrow = async () => {
@@ -276,18 +373,64 @@ async function mainOrThrow() {
         });
     });
 
-    await waitForExpoReadyOrThrow(electron);
+    const onElectronLine = async (line, isErr) => {
+        const s = String(line);
+        if (isErr) process.stderr.write(`${s}\n`);
+        else process.stdout.write(`${s}\n`);
 
-    // Ensure device/emulator can reach host Metro via localhost.
-    adbReversePortsOrThrow(serial, reversePorts);
+        if (!expoReady && isExpoReadyLine(s)) {
+            expoReady = true;
+            // Ensure device/emulator can reach host Metro via localhost.
+            adbReversePortsOrThrow(serial, reversePorts);
 
-    // Now launch Android on-demand.
-    adbForceStopOrThrow(serial, androidPackage);
-    adbLaunchOrThrow(serial, androidPackage);
+            // Prepare Android (stop/kill) only after Metro is reachable.
+            adbForceStopOrThrow(serial, androidPackage);
+            adbKillByPidofOrThrow(serial, androidPackage);
+            expoPreparedAndroid = true;
+        }
 
-    // Keep running until Electron exits or user interrupts.
-    const { code, signal } = await waitForExitOrThrow(electron, MAX_WAIT_MS);
-    throw new Error(`electron exited (code=${String(code)} signal=${String(signal)})`);
+        if (!androidLaunchUrl) {
+            const u = parseAndroidLaunchUrlOrNull(s);
+            if (u) androidLaunchUrl = u;
+        }
+
+        if (expoPreparedAndroid && androidLaunchUrl && !androidLaunched) {
+            androidLaunched = true;
+            adbOpenDeepLinkOrThrow(serial, androidPackage, androidLaunchUrl);
+        }
+
+        const parsed = parseMonikerCompleteOrNull(s);
+        if (!parsed) return;
+
+        monikerCompleteCount += 1;
+        if (parsed.failed > 0) monikerFailedAny = true;
+        if (monikerA === null) monikerA = parsed;
+        else if (monikerB === null) monikerB = parsed;
+        else throw new Error('received more than 2 Moniker TEST COMPLETE events (unexpected)');
+
+        if (monikerCompleteCount >= 2) {
+            // eslint-disable-next-line no-console
+            console.log(`[duo] both Moniker runs complete: A=${JSON.stringify(monikerA)} B=${JSON.stringify(monikerB)}`);
+            duoDone = true;
+            desiredExitCode = monikerFailedAny ? 1 : 0;
+            completeResolve({ exitCode: desiredExitCode });
+        }
+    };
+
+    pumpElectronLinesOrThrow(electron, onElectronLine);
+
+    const winner = await Promise.race([
+        completionPromise,
+        waitForExitOrThrow(electron, MAX_WAIT_MS).then(({ code, signal }) => {
+            throw new Error(`electron exited before duo completion (code=${String(code)} signal=${String(signal)})`);
+        }),
+    ]);
+
+    if (!winner || typeof winner !== 'object' || typeof winner.exitCode !== 'number') throw new Error('duo completion resolved with invalid value');
+    if (duoDone !== true || desiredExitCode === null) throw new Error('duo completion state inconsistent');
+
+    await cleanupOrThrow();
+    process.exit(winner.exitCode);
 }
 
 if (require.main === module) {

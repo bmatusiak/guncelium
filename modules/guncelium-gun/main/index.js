@@ -333,6 +333,67 @@ function createGunTcpMeshControllerOrThrow({ electronApp }) {
 
     const state = { server: null, port: null, gun: null, storeDir: null, socket: null, peerId: null };
 
+    function requireTimeoutMs(value, name) {
+        if (value === undefined || value === null) return 5000;
+        const n = Number(value);
+        if (!Number.isFinite(n) || n < 1 || n > 10000) throw new Error(`${name} must be 1..10000`);
+        return n;
+    }
+
+    function requireKey(value) {
+        requireString(value, 'key');
+        const k = String(value).trim();
+        if (k.length > 512) throw new Error('key exceeds max length (512)');
+        return k;
+    }
+
+    function assertTcpRunningOrThrow() {
+        if (!state.server || !state.gun) throw new Error('gun tcp not running');
+        requireObjectLike(state.gun, 'state.gun');
+        if (typeof state.gun.get !== 'function') throw new Error('gun.get missing');
+    }
+
+    function requireJsonSerializableOrThrow(value) {
+        // IPC payloads should already be plain, but enforce bounded JSON size.
+        let s = null;
+        try {
+            s = JSON.stringify(value);
+        } catch (e) {
+            throw new Error(`value must be JSON-serializable: ${e && e.message ? e.message : String(e)}`);
+        }
+        if (typeof s !== 'string') throw new Error('value JSON stringify failed');
+        const MAX = 32 * 1024;
+        if (s.length > MAX) throw new Error(`value exceeds max JSON size (${String(MAX)} bytes)`);
+    }
+
+    function putOrThrow(key, value) {
+        assertTcpRunningOrThrow();
+        const k = requireKey(key);
+        requireJsonSerializableOrThrow(value);
+        state.gun.get(k).put(value);
+    }
+
+    async function onceOrThrow(key, timeoutMs) {
+        assertTcpRunningOrThrow();
+        const k = requireKey(key);
+
+        return await new Promise((resolve, reject) => {
+            let done = false;
+            const t = setTimeout(() => {
+                if (done) return;
+                done = true;
+                reject(new Error('timeout waiting for gun.once'));
+            }, timeoutMs);
+
+            state.gun.get(k).once((data) => {
+                if (done) return;
+                done = true;
+                clearTimeout(t);
+                resolve(data);
+            });
+        });
+    }
+
     async function startTcp(opts) {
         if (state.server) throw new Error('gun tcp already running');
         const o = opts && typeof opts === 'object' ? opts : {};
@@ -346,7 +407,12 @@ function createGunTcpMeshControllerOrThrow({ electronApp }) {
         const peerId = (o.peerId === undefined || o.peerId === null) ? randomIdOrThrow('tcp-peer') : String(o.peerId);
         requireString(peerId, 'opts.peerId');
 
-        const socket = createSocketAdapterOrThrow(net, { enableHello: true, peerId, helloTimeoutMs: 2000 });
+        const socket = createSocketAdapterOrThrow(net, {
+            handshakeTimeoutMs: 60000,
+            enableHello: true,
+            peerId,
+            helloTimeoutMs: 5000,
+        });
 
         const gun = Gun({ file: storeDir, peers: [] });
         if (!gun) throw new Error('gun initialization failed');
@@ -411,7 +477,22 @@ function createGunTcpMeshControllerOrThrow({ electronApp }) {
         };
     }
 
-    return { startTcp, stopTcp, statusTcp };
+    async function putTcp(opts) {
+        const o = (opts && typeof opts === 'object') ? opts : {};
+        const key = requireKey(o.key);
+        putOrThrow(key, o.value);
+        return { ok: true };
+    }
+
+    async function onceTcp(opts) {
+        const o = (opts && typeof opts === 'object') ? opts : {};
+        const key = requireKey(o.key);
+        const timeoutMs = requireTimeoutMs(o.timeoutMs, 'timeoutMs');
+        const data = await onceOrThrow(key, timeoutMs);
+        return { ok: true, data };
+    }
+
+    return { startTcp, stopTcp, statusTcp, putTcp, onceTcp };
 }
 
 function registerIpcHandlersOrThrow({ ipcMain, electronApp }) {
@@ -444,6 +525,14 @@ function registerIpcHandlersOrThrow({ ipcMain, electronApp }) {
 
     ipcMain.handle('gun:tcp:status', async () => {
         return tcpController.statusTcp();
+    });
+
+    ipcMain.handle('gun:tcp:put', async (event, opts) => {
+        return tcpController.putTcp(opts);
+    });
+
+    ipcMain.handle('gun:tcp:once', async (event, opts) => {
+        return tcpController.onceTcp(opts);
     });
 
     ipcMain.handle('gun:ws-info', async () => {

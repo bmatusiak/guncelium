@@ -4,6 +4,10 @@ function requireObject(value, name) {
     if (!value || typeof value !== 'object') throw new Error(`${name} must be an object`);
 }
 
+function requireFunction(value, name) {
+    if (typeof value !== 'function') throw new Error(`${name} must be a function`);
+}
+
 function requireString(value, name) {
     if (typeof value !== 'string' || value.trim().length === 0) throw new Error(`${name} must be a non-empty string`);
 }
@@ -183,6 +187,128 @@ function requirePositiveNumber(value, name) {
     return n;
 }
 
+function delayMsOrThrow(ms) {
+    const n = requirePositiveNumber(ms, 'delayMs');
+    return new Promise((resolve) => {
+        setTimeout(resolve, n);
+    });
+}
+
+function loadTcpSocketOrThrow() {
+    // eslint-disable-next-line global-require
+    const TcpSocket = require('react-native-tcp-socket');
+    if (!TcpSocket || typeof TcpSocket !== 'object') throw new Error('react-native-tcp-socket did not export an object');
+    requireFunction(TcpSocket.createConnection, 'react-native-tcp-socket.createConnection');
+    return TcpSocket;
+}
+
+async function socksAuthProbeOrThrow({ socksHost, socksPort, timeoutMs }) {
+    requireString(socksHost, 'socksHost');
+    requirePort(socksPort, 'socksPort');
+    const t = requirePositiveNumber(timeoutMs, 'timeoutMs');
+
+    const TcpSocket = loadTcpSocketOrThrow();
+
+    return await new Promise((resolve, reject) => {
+        let done = false;
+        const timer = setTimeout(() => {
+            if (done) return;
+            done = true;
+            try {
+                if (socket && typeof socket.destroy === 'function') socket.destroy();
+            } catch (_e) {
+                // ignore destroy errors; primary signal is timeout.
+            }
+            reject(new Error('SOCKS5 probe timeout'));
+        }, t);
+
+        const socket = TcpSocket.createConnection({ host: socksHost, port: socksPort }, () => {
+            try {
+                // SOCKS5 method negotiation: VER=5, NMETHODS=1, METHOD=0x00 (no auth)
+                socket.write(new Uint8Array([0x05, 0x01, 0x00]));
+            } catch (e) {
+                if (done) return;
+                done = true;
+                clearTimeout(timer);
+                try { socket.destroy(); } catch (_e) { /* ignore */ }
+                reject(e);
+            }
+        });
+
+        function cleanup() {
+            clearTimeout(timer);
+            if (socket && typeof socket.removeListener === 'function') {
+                socket.removeListener('data', onData);
+                socket.removeListener('error', onError);
+                socket.removeListener('close', onClose);
+            }
+        }
+
+        function finishOk() {
+            if (done) return;
+            done = true;
+            cleanup();
+            try { socket.destroy(); } catch (_e) { /* ignore */ }
+            resolve({ ok: true });
+        }
+
+        function finishErr(err) {
+            if (done) return;
+            done = true;
+            cleanup();
+            try { socket.destroy(); } catch (_e) { /* ignore */ }
+            reject(err instanceof Error ? err : new Error(String(err)));
+        }
+
+        function onData(chunk) {
+            try {
+                const u8 = (chunk instanceof Uint8Array) ? chunk : new Uint8Array(chunk);
+                if (u8.length < 2) return;
+                if (u8[0] !== 0x05) return finishErr(new Error('SOCKS5 probe invalid version'));
+                if (u8[1] !== 0x00) return finishErr(new Error('SOCKS5 probe auth rejected'));
+                return finishOk();
+            } catch (e) {
+                return finishErr(e);
+            }
+        }
+
+        function onError(err) {
+            finishErr(err);
+        }
+
+        function onClose() {
+            finishErr(new Error('SOCKS5 probe socket closed'));
+        }
+
+        socket.on('data', onData);
+        socket.on('error', onError);
+        socket.on('close', onClose);
+    });
+}
+
+async function waitForSocksReadyOrThrow({ socksHost, socksPort, timeoutMs }) {
+    requireString(socksHost, 'socksHost');
+    requirePort(socksPort, 'socksPort');
+    const totalMs = requirePositiveNumber(timeoutMs, 'timeoutMs');
+
+    const intervalMs = 250;
+    const maxAttempts = Math.min(400, Math.max(1, Math.ceil(totalMs / intervalMs)));
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        try {
+            await socksAuthProbeOrThrow({ socksHost, socksPort, timeoutMs: 800 });
+            return { ok: true, ready: true, attempts: attempt + 1 };
+        } catch (e) {
+            if (attempt === maxAttempts - 1) {
+                throw new Error(`Tor SOCKS did not become ready (${socksHost}:${socksPort}) within ${totalMs}ms: ${e.message}`);
+            }
+        }
+        await delayMsOrThrow(intervalMs);
+    }
+
+    throw new Error('unreachable: waitForSocksReadyOrThrow loop ended without result');
+}
+
 function requireBooleanOrDefault(value, name, defaultValue) {
     if (value === undefined || value === null) return defaultValue;
     if (typeof value !== 'boolean') throw new Error(`${name} must be boolean`);
@@ -332,6 +458,8 @@ function createTorReactNativeApiOrThrow() {
                 raw: result,
             };
 
+            await waitForSocksReadyOrThrow({ socksHost: '127.0.0.1', socksPort: state.socksPort, timeoutMs });
+
             return {
                 ok: true,
                 running: true,
@@ -350,6 +478,8 @@ function createTorReactNativeApiOrThrow() {
             timeout_ms: timeoutMs,
         });
         if (ok !== true) throw new Error('RnTor.initTorService returned false');
+
+        await waitForSocksReadyOrThrow({ socksHost: '127.0.0.1', socksPort: state.socksPort, timeoutMs });
 
         state.lastStart = { ts: Date.now(), service: null, localPort: null, virtualPort: null, onion: null, raw: { ok: true } };
         return { ok: true, running: true, installed: true, mode: 'react-native' };

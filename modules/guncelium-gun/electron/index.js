@@ -37,6 +37,14 @@ function createGunElectronApi() {
         tcpStatus: async () => {
             return ipcRenderer.invoke(CHANNEL_PREFIX + 'tcp:status');
         },
+        tcpPut: async (opts) => {
+            if (opts !== undefined) requireObject(opts, 'opts');
+            return ipcRenderer.invoke(CHANNEL_PREFIX + 'tcp:put', opts || {});
+        },
+        tcpOnce: async (opts) => {
+            if (opts !== undefined) requireObject(opts, 'opts');
+            return ipcRenderer.invoke(CHANNEL_PREFIX + 'tcp:once', opts || {});
+        },
     };
 }
 

@@ -179,6 +179,38 @@ function createGunReactNativeApiOrThrow() {
         },
     };
 
+    function requireTimeoutMs(value, name) {
+        if (value === undefined || value === null) return 5000;
+        const n = Number(value);
+        if (!Number.isFinite(n) || n < 1 || n > 10000) throw new Error(`${name} must be 1..10000`);
+        return n;
+    }
+
+    function requireKey(value) {
+        requireString(value, 'key');
+        const k = String(value).trim();
+        if (k.length > 512) throw new Error('key exceeds max length (512)');
+        return k;
+    }
+
+    function assertTcpRunningOrThrow() {
+        if (!state.tcp.server || !state.tcp.gun) throw new Error('gun tcp not running');
+        requireObjectLike(state.tcp.gun, 'tcp.gun');
+        if (typeof state.tcp.gun.get !== 'function') throw new Error('tcp.gun.get missing');
+    }
+
+    function requireJsonSerializableOrThrow(value) {
+        let s = null;
+        try {
+            s = JSON.stringify(value);
+        } catch (e) {
+            throw new Error(`value must be JSON-serializable: ${e && e.message ? e.message : String(e)}`);
+        }
+        if (typeof s !== 'string') throw new Error('value JSON stringify failed');
+        const MAX = 32 * 1024;
+        if (s.length > MAX) throw new Error(`value exceeds max JSON size (${String(MAX)} bytes)`);
+    }
+
     function get() {
         if (!state.gun) throw new Error('gun not running');
         return state.gun;
@@ -258,9 +290,10 @@ function createGunReactNativeApiOrThrow() {
         const socket = createSocketAdapterOrThrow(TcpSocket, {
             socksHost: '127.0.0.1',
             socksPort,
+            handshakeTimeoutMs: 60000,
             enableHello: true,
             peerId,
-            helloTimeoutMs: 2000,
+            helloTimeoutMs: 5000,
         });
 
         const gun = Gun({ peers: [], localStorage: false });
@@ -347,6 +380,42 @@ function createGunReactNativeApiOrThrow() {
         };
     }
 
+    async function tcpPut(opts) {
+        const o = (opts && typeof opts === 'object') ? opts : {};
+        const key = requireKey(o.key);
+        requireJsonSerializableOrThrow(o.value);
+        assertTcpRunningOrThrow();
+
+        state.tcp.gun.get(key).put(o.value);
+
+        return { ok: true };
+    }
+
+    async function tcpOnce(opts) {
+        const o = (opts && typeof opts === 'object') ? opts : {};
+        const key = requireKey(o.key);
+        const timeoutMs = requireTimeoutMs(o.timeoutMs, 'timeoutMs');
+        assertTcpRunningOrThrow();
+
+        const data = await new Promise((resolve, reject) => {
+            let done = false;
+            const t = setTimeout(() => {
+                if (done) return;
+                done = true;
+                reject(new Error('timeout waiting for gun.once'));
+            }, timeoutMs);
+
+            state.tcp.gun.get(key).once((v) => {
+                if (done) return;
+                done = true;
+                clearTimeout(t);
+                resolve(v);
+            });
+        });
+
+        return { ok: true, data };
+    }
+
     return {
         start,
         stop,
@@ -355,6 +424,8 @@ function createGunReactNativeApiOrThrow() {
         tcpStart,
         tcpStop,
         tcpStatus,
+        tcpPut,
+        tcpOnce,
     };
 }
 
