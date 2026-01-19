@@ -1,5 +1,8 @@
 import app from '../runtime/rectifyApp';
 
+// eslint-disable-next-line global-require
+const { createSocketAdapterOrThrow } = require('guncelium-protocal');
+
 function isElectronRenderer() {
     const root = (typeof globalThis !== 'undefined') ? globalThis : (typeof window !== 'undefined' ? window : null);
     const hasDom = (typeof window === 'object' && window && typeof window.document !== 'undefined');
@@ -37,7 +40,7 @@ async function waitForOrThrow(getter, label, maxAttempts, delayMs) {
     const attempts = Number(maxAttempts);
     const delay = Number(delayMs);
     if (!Number.isInteger(attempts) || attempts < 1 || attempts > 200) throw new Error('maxAttempts must be 1..200');
-    if (!Number.isFinite(delay) || delay < 0 || delay > 2000) throw new Error('delayMs must be 0..2000');
+    if (!Number.isInteger(delay) || delay < 0 || delay > 2000) throw new Error('delayMs must be 0..2000');
 
     for (let i = 0; i < attempts; i++) {
         // eslint-disable-next-line no-await-in-loop
@@ -75,43 +78,6 @@ function requireV3OnionHostname(value, name) {
     return s;
 }
 
-function requireUint8Array(value, name) {
-    if (!(value instanceof Uint8Array)) throw new Error(`${name} must be a Uint8Array`);
-}
-
-function randomHexSuffixOrThrow() {
-    const root = (typeof globalThis !== 'undefined') ? globalThis : (typeof window !== 'undefined' ? window : null);
-    requireObject(root, 'globalThis');
-    requireObject(root.crypto, 'crypto');
-    requireFunction(root.crypto.getRandomValues, 'crypto.getRandomValues');
-    const buf = new Uint8Array(8);
-    root.crypto.getRandomValues(buf);
-    requireUint8Array(buf, 'random buf');
-
-    let out = '';
-    for (let i = 0; i < buf.length; i++) {
-        out += buf[i].toString(16).padStart(2, '0');
-    }
-    return out;
-}
-
-async function getElectronTempDirOrThrow() {
-    if (typeof window !== 'object' || !window) throw new Error('window is required');
-    const electron = window.electron;
-    requireObject(electron, 'window.electron');
-    requireFunction(electron.getPath, 'window.electron.getPath');
-    const p = await electron.getPath('temp');
-    requireString(p, 'electron.getPath(temp)');
-    return p;
-}
-
-function joinPathOrThrow(base, leaf) {
-    requireString(base, 'base');
-    requireString(leaf, 'leaf');
-    const sep = base.endsWith('/') ? '' : '/';
-    return `${base}${sep}${leaf}`;
-}
-
 async function ensureTorInstalledOrThrow(tor) {
     const info = await tor.info();
     requireObject(info, 'tor.info');
@@ -142,7 +108,7 @@ async function startTorOrThrow(tor) {
     return started;
 }
 
-async function createHiddenServiceOrThrow(tor, gunPort, keys) {
+async function createHiddenServiceOrThrow(tor, localPort, keys) {
     requireObject(tor, 'tor');
     requireObject(tor.hiddenServices, 'tor.hiddenServices');
     requireFunction(tor.hiddenServices.create, 'tor.hiddenServices.create');
@@ -150,9 +116,9 @@ async function createHiddenServiceOrThrow(tor, gunPort, keys) {
 
     const created = await tor.hiddenServices.create({
         keys,
-        port: gunPort,
+        port: localPort,
         virtualPort: 8888,
-        service: 'gun-xchg',
+        service: 'proto-xchg',
         controlPort: true,
     });
     requireObject(created, 'tor.hiddenServices.create');
@@ -169,9 +135,7 @@ function pickGeneratedKeyResultOrThrow(createResult) {
         if (!r || typeof r !== 'object') continue;
         const k = r.key;
         if (!k || typeof k !== 'object') continue;
-        if (k.generate === true && r.ok === true && r.onion_expected) {
-            return r;
-        }
+        if (k.generate === true && r.ok === true && r.onion_expected) return r;
     }
 
     throw new Error('failed to locate generated key result (expected key.generate=true and onion_expected)');
@@ -197,15 +161,22 @@ async function waitForOnionOrThrow(tor, expectedOnion) {
     );
 }
 
-function buildAndroidLaunchUrlOrThrow(onionHostNoSuffix, runId) {
-    const onion = requireV3OnionHostname(onionHostNoSuffix, 'onion');
-    requireString(runId, 'runId');
-    const host = `${onion}.onion`;
-    // IMPORTANT: keep this URL free of '&' so `adb shell am start -d <url>` is deterministic.
-    // Format: guncelium://e2e/torGunExchange/v1/<host>/<port>/<runId>
-    const encHost = encodeURIComponent(host);
-    const encRun = encodeURIComponent(runId);
-    return `guncelium://e2e/torGunExchange/v1/${encHost}/8888/${encRun}`;
+async function getServerPortOrThrow(server) {
+    requireObject(server, 'server');
+    requireFunction(server.address, 'server.address');
+
+    return await waitForOrThrow(
+        async () => {
+            const a = server.address();
+            if (!a || typeof a !== 'object') return null;
+            const p = Number(a.port);
+            if (!Number.isInteger(p) || p < 1 || p > 65535) return null;
+            return p;
+        },
+        'server.address().port',
+        60,
+        50,
+    );
 }
 
 async function connectDuoCoordinatorOrThrow() {
@@ -247,7 +218,7 @@ async function connectDuoCoordinatorOrThrow() {
 }
 
 export default {
-    name: 'TorGunExchangeHost',
+    name: 'TorProtoExchangeHost',
     test: (h) => {
         if (!h || typeof h.describe !== 'function' || typeof h.it !== 'function') throw new Error('harness missing describe/it');
 
@@ -256,151 +227,98 @@ export default {
             if (isReactNative()) return;
         }
 
-        h.describe('Tor: exchange Gun data with Android', () => {
-            h.it('hosts Gun TCP over Tor and exchanges ping/pong', async ({ assert, log }) => {
+        h.describe('Tor: exchange protocol frames with Android', () => {
+            h.it('hosts HS and completes ping/pong over framed protocol', async ({ assert, log }) => {
                 requireObject(assert, 'assert');
                 requireFunction(assert.ok, 'assert.ok');
-                requireFunction(assert.equal, 'assert.equal');
                 if (typeof log !== 'function') throw new Error('log must be a function');
 
-                const gun = await waitForServiceOrThrow('gun');
+                // eslint-disable-next-line global-require
+                const net = require('net');
+                requireObject(net, 'net');
+
                 const tor = await waitForServiceOrThrow('tor');
-                requireObject(gun, 'gun service');
                 requireObject(tor, 'tor service');
 
-                let gunStarted = null;
-                let torStarted = false;
+                await ensureTorInstalledOrThrow(tor);
+                await ensureTorStoppedOrThrow(assert, tor);
 
-                const runId = `${Date.now()}-${randomHexSuffixOrThrow()}`;
-                const keyBase = `__e2e__/torGunExchange/${runId}`;
-                const pingKey = `${keyBase}/ping`;
-                const pongKey = `${keyBase}/pong`;
-                const pingVal = { v: `ping-${runId}` };
-                const pongVal = { v: `pong-${runId}` };
+                const runId = String(Date.now());
+                const serverPeerId = `a-electron-${runId}`;
+
+                const serverAdapter = createSocketAdapterOrThrow(net, {
+                    enableHello: true,
+                    peerId: serverPeerId,
+                    helloTimeoutMs: 5000,
+                });
+
+                let gotPing = false;
+                let server = null;
+                let torStarted = false;
+                let coord = null;
 
                 try {
-                    const tempDir = await getElectronTempDirOrThrow();
-                    const tcpStoreDir = joinPathOrThrow(tempDir, `guncelium-e2e-gun-xchg-${runId}`);
+                    server = serverAdapter.listen(0, (peer) => {
+                        try {
+                            peer.onmessage = (ev) => {
+                                const d = ev && ev.data !== undefined ? ev.data : null;
+                                if (typeof d === 'string' && d === 'ping') {
+                                    gotPing = true;
+                                    peer.send('pong');
+                                }
+                            };
+                        } catch (_e) {
+                            try { peer.close(); } catch (_e2) { }
+                        }
+                    }, '127.0.0.1');
 
-                    log('starting gun tcp (reserve port)...');
-                    gunStarted = await gun.tcpStart({ host: '127.0.0.1', port: 0, peers: [], storeDir: tcpStoreDir });
-                    requireObject(gunStarted, 'gun.tcpStart result');
-                    assert.ok(gunStarted.ok === true && gunStarted.running === true, 'gun tcp must be running');
-                    const reservedPort = Number(gunStarted.port);
-                    assert.ok(Number.isInteger(reservedPort) && reservedPort > 0 && reservedPort <= 65535, 'reservedPort must be valid');
-
-                    log('stopping gun tcp (reserve port only)...');
-                    {
-                        const stopped = await gun.tcpStop();
-                        requireObject(stopped, 'gun.tcpStop (reserve) result');
-                        assert.ok(stopped.ok === true, 'gun.tcpStop (reserve) ok');
-                    }
-                    gunStarted = null;
-
-                    log('ensuring tor installed...');
-                    await ensureTorInstalledOrThrow(tor);
-
-                    log('ensuring tor stopped...');
-                    await ensureTorStoppedOrThrow(assert, tor);
+                    const localPort = await getServerPortOrThrow(server);
+                    assert.ok(localPort > 0, 'server must bind');
 
                     log('creating hidden service config...');
-                    const created = await createHiddenServiceOrThrow(tor, reservedPort, [{ generate: true, maxAttempts: 1 }]);
+                    const created = await createHiddenServiceOrThrow(tor, localPort, [{ generate: true, maxAttempts: 1 }]);
                     const gen = pickGeneratedKeyResultOrThrow(created);
-                    const peerId = requireV3OnionHostname(gen.onion_expected, 'peerId');
-
-                    log('starting gun tcp with peerId (fixed port)...');
-                    gunStarted = await gun.tcpStart({ host: '127.0.0.1', port: reservedPort, peerId, peers: [], storeDir: tcpStoreDir });
-                    requireObject(gunStarted, 'gun.tcpStart (peerId) result');
-                    assert.ok(gunStarted.ok === true && gunStarted.running === true, 'gun tcp must be running');
-                    assert.equal(Number(gunStarted.port), reservedPort, 'gun tcp must bind reserved port');
+                    const onionBase = requireV3OnionHostname(gen.onion_expected, 'onion');
 
                     log('starting tor...');
                     await startTorOrThrow(tor);
                     torStarted = true;
 
                     log('waiting for onion hostname...');
-                    await waitForOnionOrThrow(tor, peerId);
+                    await waitForOnionOrThrow(tor, onionBase);
 
                     log('publishing exchange params to duo coordinator...');
-                    const coord = await connectDuoCoordinatorOrThrow();
+                    coord = await connectDuoCoordinatorOrThrow();
 
-                    let androidReady = false;
-                    coord.on('androidReady', () => { androidReady = true; });
-
-                    const registerAck = await new Promise((resolve, reject) => {
+                    await new Promise((resolve, reject) => {
                         coord.emit('register', { role: 'electron' }, (ack) => {
                             if (!ack || ack.ok !== true) return reject(new Error(`duo register failed: ${ack && ack.error ? ack.error : 'unknown'}`));
-                            return resolve(ack);
+                            return resolve();
                         });
                     });
 
-                    if (registerAck && registerAck.androidReady) androidReady = true;
-
                     await new Promise((resolve, reject) => {
-                        coord.emit('exchangeParams', { onionHost: `${peerId}.onion`, port: 8888, runId }, (ack) => {
+                        coord.emit('exchangeParams', { onionHost: `${onionBase}.onion`, port: 8888, runId }, (ack) => {
                             if (!ack || ack.ok !== true) return reject(new Error(`duo exchangeParams failed: ${ack && ack.error ? ack.error : 'unknown'}`));
                             return resolve();
                         });
                     });
 
-                    log('waiting for Android readiness via duo coordinator...');
-                    await waitForOrThrow(
-                        async () => (androidReady === true ? true : null),
-                        'androidReady (duo)',
-                        200,
-                        250,
-                    );
-                    try { coord.close(); } catch (_e) { }
-
                     log('waiting for Android ping over Tor...');
-                    await waitForOrThrow(
-                        async () => {
-                            const r = await gun.tcpOnce({ key: pingKey, timeoutMs: 500 });
-                            if (!r || typeof r !== 'object' || r.ok !== true) return null;
-                            const d = r.data;
-                            if (!d || typeof d !== 'object') return null;
-                            if (d.v !== pingVal.v) return null;
-                            return d;
-                        },
-                        'android ping',
-                        160,
-                        250,
-                    );
+                    await waitForOrThrow(async () => (gotPing === true ? true : null), 'android ping', 200, 250);
 
-                    log('writing pong to Android over Tor...');
-                    {
-                        const put = await gun.tcpPut({ key: pongKey, value: pongVal, timeoutMs: 2000 });
-                        requireObject(put, 'gun.tcpPut result');
-                        assert.ok(put.ok === true, 'gun.tcpPut ok');
+                    log('ok', `${onionBase}.onion`);
+                } finally {
+                    try { if (coord) coord.close(); } catch (_e3) { }
+                    try { if (server) server.close(); } catch (_e4) { }
+                    if (torStarted) {
+                        const stopped = await tor.stop();
+                        requireObject(stopped, 'tor.stop');
+                        assert.ok(stopped.ok === true, 'tor.stop ok');
                     }
-
-                    log('ok', `${peerId}.onion`);
-                } catch (e) {
-                    try {
-                        if (torStarted) await tor.stop();
-                    } catch (stopTorErr) {
-                        // eslint-disable-next-line no-console
-                        console.error('cleanup: tor.stop failed', stopTorErr);
-                    }
-                    try {
-                        if (gunStarted && gunStarted.running) await gun.tcpStop();
-                    } catch (stopGunErr) {
-                        // eslint-disable-next-line no-console
-                        console.error('cleanup: gun.tcpStop failed', stopGunErr);
-                    }
-                    throw e;
                 }
 
-                if (torStarted) {
-                    const stopped = await tor.stop();
-                    requireObject(stopped, 'tor.stop result');
-                    assert.ok(stopped.ok === true, 'tor.stop ok');
-                }
-                if (gunStarted && gunStarted.running) {
-                    const stopped = await gun.tcpStop();
-                    requireObject(stopped, 'gun.tcpStop result');
-                    assert.ok(stopped.ok === true, 'gun.tcpStop ok');
-                }
+                assert.ok(true, 'Tor protocol exchange host ok');
             });
         });
     },

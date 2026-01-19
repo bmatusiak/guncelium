@@ -28,12 +28,12 @@ export default function MonikerPanel({ moniker }) {
                 // Duo section: both devices online
                 duoAlign,
 
-                // Tor tests disabled while Duo alignment is stabilized.
-                // torGunHosting,
-                // rnTorSmoke,
-                // rnTorHosting,
-                // torGunExchangeHost,
-                // torGunExchangeClient,
+                // Tor
+                torGunHosting,
+                rnTorSmoke,
+                rnTorHosting,
+                torGunExchangeHost,
+                torGunExchangeClient,
             ]} />
         </View>
     );

@@ -178,6 +178,7 @@ function startDuoCoordinatorOrThrow() {
         exchangeParams: null,
         aligned: { electron: false, android: false },
         data: { electron: null, android: null },
+        androidReady: null,
     };
 
     io.on('connection', (socket) => {
@@ -204,6 +205,9 @@ function startDuoCoordinatorOrThrow() {
                 const ackPayload = { ok: true, role };
                 if (role === 'android' && state.exchangeParams) {
                     ackPayload.exchangeParams = state.exchangeParams;
+                }
+                if (role === 'electron' && state.androidReady) {
+                    ackPayload.androidReady = state.androidReady;
                 }
 
                 if (typeof ack === 'function') ack(ackPayload);
@@ -232,7 +236,8 @@ function startDuoCoordinatorOrThrow() {
 
         socket.on('androidReady', (payload, ack) => {
             try {
-                if (state.electron) state.electron.emit('androidReady', payload || { ok: true });
+                state.androidReady = (payload && typeof payload === 'object') ? payload : { ok: true };
+                if (state.electron) state.electron.emit('androidReady', state.androidReady);
                 if (typeof ack === 'function') ack({ ok: true });
             } catch (e) {
                 if (typeof ack === 'function') ack({ ok: false, error: e && e.message ? e.message : String(e) });
