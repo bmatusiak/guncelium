@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guncelium Asset Forge</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #0f172a;
+            color: #e2e8f0;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        }
+        .canvas-bg {
+            background-color: #1e293b;
+            background-image: 
+                radial-gradient(#334155 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+        .control-group {
+            @apply mb-6 p-5 bg-slate-800 rounded-2xl border border-slate-700 shadow-sm;
+        }
+        input[type="range"] {
+            @apply w-full h-1.5 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-emerald-500;
+        }
+        .mode-btn {
+            @apply flex-1 py-2 text-sm font-semibold rounded-lg transition-all border border-transparent;
+        }
+        .mode-btn.active {
+            @apply bg-emerald-600 text-white shadow-lg border-emerald-500;
+        }
+        .mode-btn.inactive {
+            @apply bg-slate-700 text-slate-400 hover:bg-slate-600;
+        }
+        .reset-btn {
+            @apply p-1 hover:bg-slate-600 rounded-md transition-colors text-slate-400 hover:text-white;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <nav class="bg-slate-900 border-b border-slate-700 px-8 py-5 flex justify-between items-center shadow-lg sticky top-0 z-50">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white shadow-[0_0_15px_rgba(16,185,129,0.3)]">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c-4.5 0-8 3.5-8 8 0 2.2.9 4.2 2.3 5.7L5 21l4.3-1.3c.9.3 1.8.3 2.7.3 4.5 0 8-3.5 8-8s-3.5-8-8-8z"/></svg>
+            </div>
+            <div>
+                <h1 class="text-lg font-bold text-white tracking-tight leading-none">Guncelium</h1>
+                <p class="text-xs text-emerald-400 font-medium mt-1 uppercase tracking-widest">Asset Forge</p>
+            </div>
+        </div>
+        <div class="flex gap-4">
+            <button id="electronBtn" class="bg-slate-800 hover:bg-slate-700 text-white px-5 py-2.5 rounded-xl font-semibold transition-all border border-slate-600 text-sm flex items-center gap-2">
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm4-8c0 2.21-1.79 4-4 4s-4-1.79-4-4 1.79-4 4-4 4 1.79 4 4z"/></svg>
+                Export Electron
+            </button>
+            <button id="mobileBtn" class="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2.5 rounded-xl font-semibold transition-all shadow-lg text-sm flex items-center gap-2">
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12" y2="18"/></svg>
+                Export Mobile
+            </button>
+        </div>
+    </nav>
+
+    <main class="flex-1 flex flex-col md:flex-row overflow-hidden">
+        <!-- Sidebar -->
+        <aside class="w-full md:w-96 bg-slate-900 border-r border-slate-700 overflow-y-auto p-8 custom-scrollbar">
+            
+            <!-- Mode Switcher -->
+            <div class="mb-8 p-1 bg-slate-800 rounded-xl flex gap-1">
+                <button id="btnStatic" onclick="setMode('static')" class="mode-btn active">Install (B&W)</button>
+                <button id="btnDynamic" onclick="setMode('dynamic')" class="mode-btn inactive">Network (Live)</button>
+            </div>
+
+            <!-- Contextual Controls -->
+            <div id="controlsStatic">
+                <div class="control-group">
+                    <label class="block text-sm font-bold text-slate-300 mb-4 uppercase tracking-wider">Install Theme</label>
+                    <div class="flex gap-2">
+                        <button onclick="setTheme('dark')" class="flex-1 py-2 bg-black border border-slate-600 rounded hover:border-white transition-colors text-xs text-slate-400">Dark</button>
+                        <button onclick="setTheme('light')" class="flex-1 py-2 bg-white text-black border border-transparent rounded hover:bg-gray-100 transition-colors text-xs">Light</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="controlsDynamic" class="hidden">
+                <div class="control-group">
+                    <label class="block text-sm font-bold text-slate-300 mb-4 uppercase tracking-wider">Network Dynamics</label>
+                    <div class="space-y-6">
+                        <div>
+                            <div class="flex justify-between mb-2"><span class="text-xs text-slate-400">Pulse Speed</span><span id="speedVal" class="text-xs font-mono text-emerald-400">1.0</span></div>
+                            <input type="range" id="hypnoSpeed" min="0" max="50" value="20">
+                        </div>
+                        <div>
+                            <div class="flex justify-between mb-2"><span class="text-xs text-slate-400">Node Density</span><span id="densityVal" class="text-xs font-mono text-emerald-400">10</span></div>
+                            <input type="range" id="hypnoDensity" min="4" max="20" value="10">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Shared Controls -->
+            <div class="control-group">
+                <label class="text-sm font-bold text-slate-300 mb-4 uppercase tracking-wider">Geometry</label>
+                <div class="space-y-6">
+                    <div>
+                        <div class="flex justify-between mb-2"><span class="text-xs text-slate-400">Scale</span><span id="sizeVal" class="text-xs font-mono text-emerald-400">60%</span></div>
+                        <input type="range" id="fontSize" min="20" max="100" value="60">
+                    </div>
+                    <div>
+                        <div class="flex justify-between mb-2 items-center">
+                            <span class="text-xs text-slate-400">Position X</span>
+                            <button onclick="resetCoord('posX')" class="reset-btn">Reset</button>
+                        </div>
+                        <input type="range" id="posX" min="-300" max="300" value="0">
+                    </div>
+                    <div>
+                        <div class="flex justify-between mb-2 items-center">
+                            <span class="text-xs text-slate-400">Position Y</span>
+                            <button onclick="resetCoord('posY')" class="reset-btn">Reset</button>
+                        </div>
+                        <input type="range" id="posY" min="-400" max="400" value="-100">
+                    </div>
+                     <div>
+                        <div class="flex justify-between mb-2"><span class="text-xs text-slate-400">Corner Radius</span><span id="radiusVal" class="text-xs font-mono text-emerald-400">22%</span></div>
+                        <input type="range" id="borderRadius" min="0" max="50" value="22">
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Preview Area -->
+        <section class="flex-1 canvas-bg flex flex-col items-center justify-center p-12 relative">
+            <div id="canvasWrapper" class="relative mb-12 transform transition-transform duration-300">
+                <canvas id="iconCanvas" width="1024" height="1024" class="max-w-full h-auto shadow-2xl rounded-2xl bg-black" style="width: 480px; height: 480px;"></canvas>
+            </div>
+            
+            <div class="grid grid-cols-3 gap-6 max-w-xl w-full">
+                <div class="bg-slate-800 p-4 rounded-2xl border border-slate-700 shadow-sm text-center">
+                    <div class="text-[9px] text-slate-400 uppercase font-black mb-3 tracking-widest">Mobile Adaptive</div>
+                    <div id="miniPreviewCircle" class="w-20 h-20 rounded-full mx-auto overflow-hidden bg-black border border-slate-700"></div>
+                </div>
+                <div class="bg-slate-800 p-4 rounded-2xl border border-slate-700 shadow-sm text-center">
+                    <div class="text-[9px] text-slate-400 uppercase font-black mb-3 tracking-widest">Install Icon</div>
+                    <div id="miniPreviewIOS" class="w-20 h-20 rounded-2xl mx-auto overflow-hidden bg-black border border-slate-700"></div>
+                </div>
+                <div class="bg-slate-800 p-4 rounded-2xl border border-slate-700 shadow-sm text-center">
+                    <div class="text-[9px] text-slate-400 uppercase font-black mb-3 tracking-widest">Tray / Favicon</div>
+                    <div id="miniPreviewFav" class="w-10 h-10 rounded-sm mx-auto mt-5 bg-black border border-slate-700"></div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <div id="toast" class="fixed bottom-8 left-1/2 -translate-x-1/2 bg-emerald-600 text-white px-8 py-3 rounded-xl shadow-2xl transform translate-y-32 transition-transform duration-500 z-50 flex items-center gap-3">
+        <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+        <span id="toastMsg" class="text-sm font-bold tracking-wide">Processing...</span>
+    </div>
+
+    <script>
+/*
+ * =========================================================================================
+ * GUNCELIUM ASSET FORGE - IMPLEMENTATION GUIDE
+ * =========================================================================================
+ * * This tool generates two distinct types of assets for the Guncelium ecosystem:
+ * * 1. INSTALL MODE (Static / B&W)
+ * --------------------------------------------------------------------------------------
+ * Purpose: The main application icon seen on the OS dock, home screen, and app store.
+ * Style:   High-contrast, monochrome (Black/White) for maximum readability and "System" feel.
+ * * 2. NETWORK MODE (Dynamic / Color)
+ * --------------------------------------------------------------------------------------
+ * Purpose: Visual indicator for "Connecting", "Loading", or "Active Work" states.
+ * Style:   Organic, pulsing, vivid colors (The "Mycelium" coming alive).
+ * Usage:   Use the exported PNG as a Splash Screen, or port the canvas logic below 
+ * into your app for live animation.
+ * * =========================================================================================
+ * PLATFORM INTEGRATION GUIDE
+ * =========================================================================================
+ * * [A] REACT NATIVE (VIA EXPO)
+ * -----------------------------------------------------------------------------------------
+ * 1. Export the "Mobile Bundle" from this tool.
+ * 2. Replace the assets in your project's ./assets/ directory.
+ * 3. Configure app.json:
+ * * {
+ * "expo": {
+ * "icon": "./assets/icon.png",           <-- Use the Static B&W Icon here
+ * "splash": {
+ * "image": "./assets/splash.png",      <-- Use the Dynamic Color Snapshot here
+ * "resizeMode": "contain",
+ * "backgroundColor": "#000000"
+ * },
+ * "android": {
+ * "adaptiveIcon": {
+ * "foregroundImage": "./assets/adaptive-icon.png", <-- Static B&W
+ * "backgroundColor": "#000000"
+ * }
+ * },
+ * "ios": {
+ * "supportsTablet": true
+ * }
+ * }
+ * }
+ * * * Tip: To recreate the LIVE animation in React Native, use <Canvas> from 
+ * @shopify/react-native-skia and port the 'render()' logic found in this script.
+ * * [B] ELECTRON (DESKTOP)
+ * -----------------------------------------------------------------------------------------
+ * 1. Export the "Electron Assets" from this tool.
+ * 2. For the Window Icon (runtime):
+ * * // main.js
+ * const { BrowserWindow } = require('electron');
+ * const path = require('path');
+ * * function createWindow() {
+ * const win = new BrowserWindow({
+ * width: 800,
+ * height: 600,
+ * icon: path.join(__dirname, 'assets/electron-icon-512.png') // Use Static B&W
+ * });
+ * // ...
+ * }
+ * * 3. For the Installer/Dock Icon (Build time via electron-builder):
+ * - Convert the 1024px PNG to .icns (Mac) and .ico (Windows).
+ * - Configure package.json:
+ * * "build": {
+ * "appId": "com.guncelium.app",
+ * "mac": {
+ * "icon": "build/icon.icns"
+ * },
+ * "win": {
+ * "icon": "build/icon.ico"
+ * },
+ * "linux": {
+ * "icon": "build/"
+ * }
+ * }
+ * * * Tip: To use the LIVE animation in Electron, simply drop the 'render()' logic 
+ * into an HTML5 Canvas element within your React/HTML renderer process.
+ * * =========================================================================================
+ */
+
+        // State
+        let currentMode = 'static'; // 'static' or 'dynamic'
+        let staticTheme = 'dark'; // 'dark' (Black BG, White FG) or 'light' (White BG, Black FG)
+        
+        const canvas = document.getElementById('iconCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Buffers for Dynamic Mode
+        const maskBuffer = document.createElement('canvas');
+        const contentBuffer = document.createElement('canvas');
+        [maskBuffer, contentBuffer].forEach(c => { c.width = 1024; c.height = 1024; });
+
+        // Controls
+        const ctrl = {};
+        ['hypnoSpeed', 'hypnoDensity', 'fontSize', 'posX', 'posY', 'borderRadius'].forEach(id => ctrl[id] = document.getElementById(id));
+
+        // Animation vars
+        let time = 0;
+        const dots = [];
+
+        function initDots() {
+            dots.length = 0;
+            const density = 25; 
+            for (let x = 0; x < density; x++) {
+                for (let y = 0; y < density; y++) {
+                    dots.push({
+                        x: (x / (density - 1)) * 1024,
+                        y: (y / (density - 1)) * 1024,
+                        hue: Math.random() * 360, // Random vivid colors for dynamic mode
+                        offset: Math.random() * Math.PI * 2
+                    });
+                }
+            }
+        }
+        initDots();
+
+        // --- Core Logic ---
+
+        function setMode(mode) {
+            currentMode = mode;
+            document.getElementById('btnStatic').className = mode === 'static' ? 'mode-btn active' : 'mode-btn inactive';
+            document.getElementById('btnDynamic').className = mode === 'dynamic' ? 'mode-btn active' : 'mode-btn inactive';
+            
+            document.getElementById('controlsStatic').style.display = mode === 'static' ? 'block' : 'none';
+            document.getElementById('controlsDynamic').style.display = mode === 'dynamic' ? 'block' : 'none';
+        }
+
+        function setTheme(theme) {
+            staticTheme = theme;
+        }
+
+        function resetCoord(id) {
+            ctrl[id].value = (id === 'posY') ? -100 : 0;
+        }
+
+        function showToast(msg) {
+            document.getElementById('toastMsg').innerText = msg;
+            const t = document.getElementById('toast');
+            t.classList.remove('translate-y-32');
+            setTimeout(() => t.classList.add('translate-y-32'), 3000);
+        }
+
+        // --- Drawing ---
+
+        function traceRootPath(ctx, x, y, angle, length, depth, initialWidth) {
+            if (depth <= 0) return;
+            const endX = x + Math.cos(angle) * length;
+            const endY = y + Math.sin(angle) * length;
+            ctx.lineWidth = initialWidth;
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            
+            const cp1X = x + Math.cos(angle + 0.1) * (length * 0.5);
+            const cp1Y = y + Math.sin(angle + 0.1) * (length * 0.5);
+            ctx.quadraticCurveTo(cp1X, cp1Y, endX, endY);
+            ctx.stroke();
+
+            const branches = depth > 3 ? 2 : 1;
+            for (let i = 0; i < branches; i++) {
+                const spread = 0.6;
+                const nextAngle = angle + (i === 0 ? -spread/2 : spread/2);
+                const nextLen = length * 0.75;
+                traceRootPath(ctx, endX, endY, nextAngle, nextLen, depth - 1, initialWidth * 0.75);
+            }
+        }
+
+        function drawMushroomShape(ctx, size, isMask) {
+            const scale = (ctrl.fontSize.value / 100) * size;
+            const x = size / 2 + (parseInt(ctrl.posX.value) / 1000) * size;
+            const y = size / 2 + (parseInt(ctrl.posY.value) / 1000) * size;
+
+            ctx.save();
+            ctx.translate(x, y);
+            
+            // Set styles based on mode
+            if (isMask) {
+                // For dynamic stencil: Shape is White (opaque)
+                ctx.fillStyle = 'white';
+                ctx.strokeStyle = 'white';
+            } else {
+                // For static install: Shape is White (Dark theme) or Black (Light theme)
+                ctx.fillStyle = staticTheme === 'dark' ? '#ffffff' : '#000000';
+                ctx.strokeStyle = staticTheme === 'dark' ? '#ffffff' : '#000000';
+            }
+
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            
+            // Draw Cap & Stem
+            ctx.beginPath();
+            ctx.moveTo(0, -0.48 * scale);
+            ctx.bezierCurveTo(0.15 * scale, -0.45 * scale, 0.45 * scale, -0.15 * scale, 0.48 * scale, 0.05 * scale);
+            ctx.bezierCurveTo(0.48 * scale, 0.12 * scale, 0.15 * scale, 0.1 * scale, 0.1 * scale, 0.12 * scale);
+            ctx.lineTo(0.06 * scale, 0.35 * scale);
+            ctx.lineTo(-0.06 * scale, 0.35 * scale);
+            ctx.lineTo(-0.1 * scale, 0.12 * scale);
+            ctx.bezierCurveTo(-0.15 * scale, 0.1 * scale, -0.48 * scale, 0.12 * scale, -0.48 * scale, 0.05 * scale);
+            ctx.bezierCurveTo(-0.45 * scale, -0.15 * scale, -0.15 * scale, -0.45 * scale, 0, -0.48 * scale);
+            ctx.fill();
+
+            // Draw Roots
+            const rootStartY = 0.35 * scale;
+            const rootAngles = [0.15, 0.4, 0.6, 0.85];
+            rootAngles.forEach(angleOffset => {
+                traceRootPath(ctx, 0.02 * scale, rootStartY, Math.PI * angleOffset, 0.18 * scale, 5, 0.015 * scale);
+                traceRootPath(ctx, -0.02 * scale, rootStartY, Math.PI * (1 - angleOffset), 0.18 * scale, 5, 0.015 * scale);
+            });
+            ctx.restore();
+        }
+
+        function drawDynamicDots(ctx, size) {
+            const densityFactor = parseInt(ctrl.hypnoDensity.value);
+            const speedFactor = parseInt(ctrl.hypnoSpeed.value) / 100;
+            
+            ctx.save();
+            dots.forEach((dot, i) => {
+                if (i % Math.floor(30 / densityFactor) !== 0) return;
+                const growth = Math.sin(time * speedFactor + dot.offset) * 0.5 + 0.5;
+                const radius = (1024 / densityFactor) * growth * 0.8;
+                ctx.beginPath();
+                ctx.fillStyle = `hsla(${dot.hue}, 80%, 60%, 1)`;
+                ctx.arc(dot.x, dot.y, radius, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            ctx.restore();
+        }
+
+        function render() {
+            const size = 1024;
+            const radius = (ctrl.borderRadius.value / 100) * size;
+
+            ctx.clearRect(0, 0, size, size);
+
+            if (currentMode === 'static') {
+                // --- STATIC MODE (Install Icon) ---
+                // 1. Draw Background
+                ctx.fillStyle = staticTheme === 'dark' ? '#000000' : '#ffffff';
+                ctx.beginPath();
+                if (ctx.roundRect) ctx.roundRect(0, 0, size, size, radius);
+                else ctx.rect(0, 0, size, size);
+                ctx.fill();
+
+                // 2. Draw Simple Silhouette
+                drawMushroomShape(ctx, size, false);
+
+            } else {
+                // --- DYNAMIC MODE (Network/Loading) ---
+                const mCtx = maskBuffer.getContext('2d');
+                const cCtx = contentBuffer.getContext('2d');
+
+                mCtx.clearRect(0, 0, size, size);
+                cCtx.clearRect(0, 0, size, size);
+
+                // 1. Create Stencil Mask
+                drawMushroomShape(mCtx, size, true);
+
+                // 2. Draw Animated Dots
+                drawDynamicDots(cCtx, size);
+
+                // 3. Clip Dots with Mask
+                cCtx.save();
+                cCtx.globalCompositeOperation = 'destination-in';
+                cCtx.drawImage(maskBuffer, 0, 0);
+                cCtx.restore();
+
+                // 4. Draw Black Background Card
+                ctx.fillStyle = '#000000'; // Dynamic always has black background for "cyber" feel
+                ctx.beginPath();
+                if (ctx.roundRect) ctx.roundRect(0, 0, size, size, radius);
+                else ctx.rect(0, 0, size, size);
+                ctx.fill();
+
+                // 5. Composite Clipped Dots
+                ctx.drawImage(contentBuffer, 0, 0);
+            }
+
+            // Update UI
+            const url = canvas.toDataURL();
+            ['miniPreviewCircle', 'miniPreviewIOS', 'miniPreviewFav'].forEach(id => {
+                document.getElementById(id).style.background = `url(${url}) center/cover`;
+            });
+            document.getElementById('sizeVal').innerText = ctrl.fontSize.value + '%';
+            document.getElementById('radiusVal').innerText = ctrl.borderRadius.value + '%';
+        }
+
+        function loop() {
+            if (currentMode === 'dynamic') {
+                time += 0.5;
+            }
+            render();
+            requestAnimationFrame(loop);
+        }
+
+        // --- Exports ---
+
+        // Helper to download a specific canvas state
+        function downloadBlob(blob, filename) {
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            link.click();
+            URL.revokeObjectURL(url);
+        }
+
+        document.getElementById('mobileBtn').onclick = () => {
+            showToast("Generating Mobile Bundle...");
+            
+            // We need to render specific sizes
+            const sizes = [
+                { s: 1024, n: 'icon.png' },      // Store
+                { s: 1024, n: 'adaptive-icon.png' }, // Android
+                { s: 1242, n: 'splash.png' },    // Splash
+                { s: 48, n: 'favicon.png' }      // Web
+            ];
+
+            sizes.forEach((item, i) => {
+                setTimeout(() => {
+                    // Create temp canvas to resize/render
+                    const off = document.createElement('canvas');
+                    off.width = item.s;
+                    off.height = item.s;
+                    
+                    // We must hijack the render logic momentarily or just scale the main canvas
+                    // Scaling main canvas is easier and consistent
+                    const tempCtx = off.getContext('2d');
+                    tempCtx.drawImage(canvas, 0, 0, item.s, item.s);
+                    
+                    off.toBlob(b => downloadBlob(b, item.n));
+                }, i * 300);
+            });
+        };
+
+        document.getElementById('electronBtn').onclick = () => {
+            showToast("Generating Electron Assets...");
+            
+            // Electron needs high res pngs, often converted to .ico/.icns later
+            const sizes = [
+                { s: 1024, n: 'electron-icon-1024.png' },
+                { s: 512, n: 'electron-icon-512.png' },
+                { s: 256, n: 'electron-icon-256.png' },
+                { s: 32, n: 'tray-icon.png' } // Usually small
+            ];
+
+            sizes.forEach((item, i) => {
+                setTimeout(() => {
+                    const off = document.createElement('canvas');
+                    off.width = item.s;
+                    off.height = item.s;
+                    const tempCtx = off.getContext('2d');
+                    tempCtx.drawImage(canvas, 0, 0, item.s, item.s);
+                    off.toBlob(b => downloadBlob(b, item.n));
+                }, i * 300);
+            });
+        };
+
+        // Start
+        loop();
+
+    </script>
+</body>
+</html>
