@@ -67,12 +67,12 @@
             
             <!-- Mode Switcher -->
             <div class="mb-8 p-1 bg-slate-800 rounded-xl flex gap-1">
-                <button id="btnStatic" onclick="setMode('static')" class="mode-btn active">Install (B&W)</button>
-                <button id="btnDynamic" onclick="setMode('dynamic')" class="mode-btn inactive">Network (Live)</button>
+                <button id="btnDynamic" onclick="setMode('dynamic')" class="mode-btn active">Network (Live)</button>
+                <button id="btnStatic" onclick="setMode('static')" class="mode-btn inactive">Install (B&W)</button>
             </div>
 
             <!-- Contextual Controls -->
-            <div id="controlsStatic">
+            <div id="controlsStatic" class="hidden">
                 <div class="control-group">
                     <label class="block text-sm font-bold text-slate-300 mb-4 uppercase tracking-wider">Install Theme</label>
                     <div class="flex gap-2">
@@ -82,7 +82,7 @@
                 </div>
             </div>
 
-            <div id="controlsDynamic" class="hidden">
+            <div id="controlsDynamic">
                 <div class="control-group">
                     <label class="block text-sm font-bold text-slate-300 mb-4 uppercase tracking-wider">Network Dynamics</label>
                     <div class="space-y-6">
@@ -237,7 +237,7 @@
  */
 
         // State
-        let currentMode = 'static'; // 'static' or 'dynamic'
+        let currentMode = 'dynamic'; // 'static' or 'dynamic'
         let staticTheme = 'dark'; // 'dark' (Black BG, White FG) or 'light' (White BG, Black FG)
         
         const canvas = document.getElementById('iconCanvas');
