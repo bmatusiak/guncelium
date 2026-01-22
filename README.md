@@ -105,6 +105,29 @@ For deeper design context:
 - Vision/manifest: [docs/guncelium-idea.md](docs/guncelium-idea.md)
 - Onion-mesh proposal: [docs/onion-mesh.md](docs/onion-mesh.md)
 
+## Docs index
+
+If you’re new, start with the vision + the test harness, then drill into the wire details.
+
+- **Vision / philosophy**
+	- Vision + comparative framing: [docs/guncelium-idea.md](docs/guncelium-idea.md)
+	- Project stance (a path, not *the* path): [docs/white-paper-a-way-not-the-way.md](docs/white-paper-a-way-not-the-way.md)
+
+- **Networking / protocols (implemented today)**
+	- Cross-platform framed TCP + SOCKS5 rules (porting guide): [docs/networking-nodejs-and-react-native.md](docs/networking-nodejs-and-react-native.md)
+	- Canonical adapter behavior (framing, `.onion` detection, HELLO): [modules/guncelium-protocal/README.md](modules/guncelium-protocal/README.md)
+	- Onion-mesh proposal + discovery/trust notes (draft): [docs/onion-mesh.md](docs/onion-mesh.md)
+
+- **Testing**
+	- Moniker harness order + duo runner details: [docs/testing-guide.md](docs/testing-guide.md)
+
+- **White papers (planned directions, not implemented yet)**
+	- Decentralized bot governance: [docs/white-paper-decentralized-bot.md](docs/white-paper-decentralized-bot.md)
+	- Decentralized data escrow: [docs/white-paper-decentralized-escro.md](docs/white-paper-decentralized-escro.md)
+	- Decentralized attention economy (opt-in): [docs/white-paper-decentralized-attention-economy-protocol.md](docs/white-paper-decentralized-attention-economy-protocol.md)
+	- Bacon Bot (six-degrees mesh wiring): [docs/white-paper-the-bacon-bot-protocol.md](docs/white-paper-the-bacon-bot-protocol.md)
+	- Bacon Shield (local trust filtering): [docs/white-paper-the-bacon-shield-protocol.md](docs/white-paper-the-bacon-shield-protocol.md)
+
 ## What’s in this repo
 
 - **Rectify plugin assembly** lives in `src/` (services are composed and provided to the UI/runtime).
@@ -174,13 +197,23 @@ Recommended cross-device run (Electron + Android):
 
 This does the orchestration (starts Electron, starts the Socket.IO coordinator, does `adb reverse`, launches Android via a fixed deep link) and exits once both sides print the Moniker completion line.
 
-What it validates by default:
+What it validates depends on the current Moniker test list.
 
-- Duo alignment (Socket.IO barrier + validated data swap)
-- Tor on Android (smoke + hidden-service hosting + SOCKS fetch)
-- Tor cross-device connectivity using `guncelium-protocal` framed TCP (ping/pong over Tor)
+- The test order is defined in [src/init/panels/MonikerPanel.js](src/init/panels/MonikerPanel.js).
+- The repo includes Tor + cross-device protocol tests in [src/__e2e_tests__/](src/__e2e_tests__/), but they may be disabled while stabilizing local-first behavior.
+
+If you want the full Tor + cross-device protocol coverage, use [docs/testing-guide.md](docs/testing-guide.md) and add the Tor tests back into the `tests=[...]` list in `MonikerPanel`.
 
 See the full ordering and test breakdown in [docs/testing-guide.md](docs/testing-guide.md).
+
+## Trust model (discovery is not authority)
+
+Some docs describe a “bootstrap onion” / rendezvous idea. If that approach is used:
+
+- Treat bootstrap discovery as **hints only** (availability), not as a trusted source of truth.
+- Assume directory poisoning and impersonation are possible; require **application-layer signatures** (e.g. Gun SEA) before using discovery data to make trust decisions.
+
+This is expanded in the Onion-mesh draft: [docs/onion-mesh.md](docs/onion-mesh.md)
 
 ### CLI smoke test (Node)
 
@@ -248,6 +281,11 @@ Porting checklist:
 
 - Provide a socket implementation with deterministic lifecycle (connect, data events, close) equivalent to Node’s `net.Socket` / RN TCP sockets.
 - Enforce hard bounds (max frame size, bounded waits/retries) and fail-fast on malformed frames or failed SOCKS5 handshakes.
+
+Implementation notes (important if you’re porting the wire):
+
+- **Optional HELLO handshake:** the framed TCP adapter can perform a pre-data identity exchange used to avoid self-connects and double-connects (deterministic tie-break). See: [modules/guncelium-protocal/README.md](modules/guncelium-protocal/README.md)
+- **Gun batch compatibility:** when a JSON payload decodes to an array, the adapter intentionally emits the *raw JSON string* (Gun mesh expects batch strings like `"[{...},{...}]"`). This behavior is documented in [docs/networking-nodejs-and-react-native.md](docs/networking-nodejs-and-react-native.md)
 
 ## Crypto (what we use and why)
 
