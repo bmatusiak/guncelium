@@ -94,6 +94,10 @@
                             <div class="flex justify-between mb-2"><span class="text-xs text-slate-400">Node Density</span><span id="densityVal" class="text-xs font-mono text-emerald-400">234</span></div>
                             <input type="range" id="hypnoDensity" min="0" max="625" value="234">
                         </div>
+                        <div>
+                            <div class="flex justify-between mb-2"><span class="text-xs text-slate-400">Dot Opacity</span><span id="alphaVal" class="text-xs font-mono text-emerald-400">75%</span></div>
+                            <input type="range" id="dotAlpha" min="0" max="100" value="75">
+                        </div>
                     </div>
                 </div>
 
@@ -249,7 +253,7 @@
 
         // Controls
         const ctrl = {};
-        ['hypnoSpeed', 'hypnoDensity', 'fontSize', 'posX', 'posY', 'borderRadius'].forEach(id => ctrl[id] = document.getElementById(id));
+        ['hypnoSpeed', 'hypnoDensity', 'dotAlpha', 'fontSize', 'posX', 'posY', 'borderRadius'].forEach(id => ctrl[id] = document.getElementById(id));
 
         // Animation vars
         let time = 0;
@@ -379,6 +383,7 @@
 
         function drawDynamicDots(ctx, size) {
             const desiredDotCount = Math.max(0, Math.min(DOT_COUNT, parseInt(ctrl.hypnoDensity.value) || 0));
+            const dotAlpha = Math.max(0, Math.min(1, (parseInt(ctrl.dotAlpha.value) || 0) / 100));
             // Speed is in radians/second; time is in seconds.
             const speedFactor = parseInt(ctrl.hypnoSpeed.value) * 0.3;
             
@@ -394,6 +399,7 @@
                 const cycle = Math.floor(phase / TWO_PI);
                 if (cycle !== dot.cycle) {
                     randomizeDotPosition(dot);
+                    dot.hue = Math.random() * 360;
                     dot.cycle = cycle;
                     if (i > 0) {
                         drawOrder.splice(i, 1);
@@ -415,7 +421,7 @@
                 if (radius <= 0.01) continue;
 
                 ctx.beginPath();
-                ctx.fillStyle = `hsla(${dot.hue}, 80%, 60%, 1)`;
+                ctx.fillStyle = `hsla(${dot.hue}, 80%, 60%, ${dotAlpha})`;
                 ctx.arc(dot.x, dot.y, radius, 0, Math.PI * 2);
                 ctx.fill();
             }
@@ -480,6 +486,7 @@
             document.getElementById('radiusVal').innerText = ctrl.borderRadius.value + '%';
             document.getElementById('speedVal').innerText = String(ctrl.hypnoSpeed.value);
             document.getElementById('densityVal').innerText = String(Math.max(0, Math.min(DOT_COUNT, parseInt(ctrl.hypnoDensity.value) || 0)));
+            document.getElementById('alphaVal').innerText = String(Math.max(0, Math.min(100, parseInt(ctrl.dotAlpha.value) || 0))) + '%';
         }
 
         function loop() {
