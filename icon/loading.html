@@ -254,20 +254,31 @@
 
         // Animation vars
         let time = 0;
+        let lastNow = 0;
+        const TWO_PI = Math.PI * 2;
+        const DOT_COUNT = 25 * 25;
         const dots = [];
+        const drawOrder = [];
+
+        function randomizeDotPosition(dot) {
+            dot.x = Math.random() * 1024;
+            dot.y = Math.random() * 1024;
+        }
 
         function initDots() {
             dots.length = 0;
-            const density = 25; 
-            for (let x = 0; x < density; x++) {
-                for (let y = 0; y < density; y++) {
-                    dots.push({
-                        x: (x / (density - 1)) * 1024,
-                        y: (y / (density - 1)) * 1024,
-                        hue: Math.random() * 360, // Random vivid colors for dynamic mode
-                        offset: Math.random() * Math.PI * 2
-                    });
-                }
+            drawOrder.length = 0;
+            for (let i = 0; i < DOT_COUNT; i++) {
+                const dot = {
+                    x: 0,
+                    y: 0,
+                    hue: Math.random() * 360, // Random vivid colors for dynamic mode
+                    offset: Math.random() * TWO_PI,
+                    cycle: 0,
+                };
+                randomizeDotPosition(dot);
+                dots.push(dot);
+                drawOrder.push(dot);
             }
         }
         initDots();
@@ -368,18 +379,48 @@
 
         function drawDynamicDots(ctx, size) {
             const densityFactor = parseInt(ctrl.hypnoDensity.value);
-            const speedFactor = parseInt(ctrl.hypnoSpeed.value) / 100;
+            // Speed is in radians/second; time is in seconds.
+            const speedFactor = parseInt(ctrl.hypnoSpeed.value) * 0.3;
             
             ctx.save();
-            dots.forEach((dot, i) => {
-                if (i % Math.floor(30 / densityFactor) !== 0) return;
-                const growth = Math.sin(time * speedFactor + dot.offset) * 0.5 + 0.5;
-                const radius = (1024 / densityFactor) * growth * 0.8;
+
+            // Density controls how many dots render (not their size).
+            const stride = Math.max(1, Math.floor(30 / densityFactor));
+            const baseRadius = 80; // independent of density
+
+            // Update: if a dot completes its cycle, respawn it behind older dots.
+            // (New dots should never appear on top of old dots.)
+            for (let i = 0; i < drawOrder.length; i++) {
+                const dot = drawOrder[i];
+                const phase = time * speedFactor + dot.offset;
+                const cycle = Math.floor(phase / TWO_PI);
+                if (cycle !== dot.cycle) {
+                    randomizeDotPosition(dot);
+                    dot.cycle = cycle;
+                    if (i > 0) {
+                        drawOrder.splice(i, 1);
+                        drawOrder.unshift(dot);
+                    }
+                }
+            }
+
+            // Draw back -> front.
+            for (let i = 0; i < drawOrder.length; i++) {
+                if (i % stride !== 0) continue;
+                const dot = drawOrder[i];
+                const phase = time * speedFactor + dot.offset;
+                const local = phase - Math.floor(phase / TWO_PI) * TWO_PI;
+
+                // 0 -> 1 -> 0 over the cycle: new dots grow in while old dots shrink out.
+                const life = Math.sin(local * 0.5);
+                const radius = baseRadius * Math.max(0, life);
+                if (radius <= 0.01) continue;
+
                 ctx.beginPath();
                 ctx.fillStyle = `hsla(${dot.hue}, 80%, 60%, 1)`;
                 ctx.arc(dot.x, dot.y, radius, 0, Math.PI * 2);
                 ctx.fill();
-            });
+            }
             ctx.restore();
         }
 
@@ -442,8 +483,13 @@
         }
 
         function loop() {
+            const now = performance.now();
+            if (!lastNow) lastNow = now;
+            const dtSec = Math.min(0.1, (now - lastNow) / 1000);
+            lastNow = now;
+
             if (currentMode === 'dynamic') {
-                time += 0.5;
+                time += dtSec;
             }
             render();
             requestAnimationFrame(loop);
