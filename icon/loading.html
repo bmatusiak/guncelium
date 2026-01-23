@@ -98,6 +98,10 @@
                             <div class="flex justify-between mb-2"><span class="text-xs text-slate-400">Dot Opacity</span><span id="alphaVal" class="text-xs font-mono text-emerald-400">75%</span></div>
                             <input type="range" id="dotAlpha" min="0" max="100" value="75">
                         </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs text-slate-400">Constrain To Shape</span>
+                            <input type="checkbox" id="limitToShape" checked>
+                        </div>
                     </div>
                 </div>
 
@@ -253,7 +257,7 @@
 
         // Controls
         const ctrl = {};
-        ['hypnoSpeed', 'hypnoDensity', 'dotAlpha', 'fontSize', 'posX', 'posY', 'borderRadius'].forEach(id => ctrl[id] = document.getElementById(id));
+        ['hypnoSpeed', 'hypnoDensity', 'dotAlpha', 'limitToShape', 'fontSize', 'posX', 'posY', 'borderRadius'].forEach(id => ctrl[id] = document.getElementById(id));
 
         // Animation vars
         let time = 0;
@@ -263,7 +267,57 @@
         const dots = [];
         const drawOrder = [];
 
+        const PLACEMENT_SAMPLE_STEP = 4;
+        const PLACEMENT_ALPHA_THRESHOLD = 32;
+        let placementKey = '';
+        let allowedPoints = [];
+
+        function getPlacementKey() {
+            return String(ctrl.fontSize.value) + '|' + String(ctrl.posX.value) + '|' + String(ctrl.posY.value);
+        }
+
+        function rebuildAllowedPointsFromMask(mCtx, size) {
+            if (!mCtx) throw new Error('Mask context missing');
+            if (!Number.isFinite(size) || size <= 0) throw new Error('Invalid size');
+            if (!Number.isFinite(PLACEMENT_SAMPLE_STEP) || PLACEMENT_SAMPLE_STEP <= 0) throw new Error('Invalid placement step');
+
+            const img = mCtx.getImageData(0, 0, size, size);
+            const data = img.data;
+
+            const nextPoints = [];
+            for (let y = 0; y < size; y += PLACEMENT_SAMPLE_STEP) {
+                for (let x = 0; x < size; x += PLACEMENT_SAMPLE_STEP) {
+                    const a = data[(y * size + x) * 4 + 3];
+                    if (a >= PLACEMENT_ALPHA_THRESHOLD) nextPoints.push({ x, y });
+                }
+            }
+
+            if (nextPoints.length <= 0) {
+                throw new Error('No allowed placement points (adjust geometry)');
+            }
+            allowedPoints = nextPoints;
+        }
+
+        function refreshAllowedPointsFromCurrentMask(mCtx, size) {
+            if (!ctrl.limitToShape.checked) return;
+            const nextKey = getPlacementKey();
+            if (nextKey === placementKey && allowedPoints.length > 0) return;
+
+            rebuildAllowedPointsFromMask(mCtx, size);
+            placementKey = nextKey;
+        }
+
         function randomizeDotPosition(dot) {
+            if (ctrl.limitToShape && ctrl.limitToShape.checked) {
+                if (!allowedPoints || allowedPoints.length <= 0) {
+                    throw new Error('Placement points not initialized');
+                }
+                const idx = Math.floor(Math.random() * allowedPoints.length);
+                const p = allowedPoints[idx];
+                dot.x = p.x;
+                dot.y = p.y;
+                return;
+            }
             dot.x = Math.random() * 1024;
             dot.y = Math.random() * 1024;
         }
@@ -285,6 +339,19 @@
                 drawOrder.push(dot);
             }
         }
+
+        // Seed placement points once so initial dot placement can respect the shape.
+        {
+            const size = 1024;
+            const mCtx = maskBuffer.getContext('2d');
+            mCtx.clearRect(0, 0, size, size);
+            drawMushroomShape(mCtx, size, true);
+            if (ctrl.limitToShape.checked) {
+                rebuildAllowedPointsFromMask(mCtx, size);
+                placementKey = getPlacementKey();
+            }
+        }
+
         initDots();
 
         // --- Core Logic ---
@@ -456,6 +523,9 @@
 
                 // 1. Create Stencil Mask
                 drawMushroomShape(mCtx, size, true);
+
+                // 1b. Refresh placement constraints (only when geometry changes)
+                refreshAllowedPointsFromCurrentMask(mCtx, size);
 
                 // 2. Draw Animated Dots
                 drawDynamicDots(cCtx, size);
